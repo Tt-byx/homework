@@ -1,10 +1,36 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import chat
+from app.services.rag_service import rag_service
+from app.core.config import settings
 
-app = FastAPI(title="景区AI数字人 - Python后端", version="0.1.0")
+import logging
 
-# CORS
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        await rag_service.init()
+        logger.info("RAG service init OK")
+    except Exception as e:
+        logger.warning(f"RAG init failed: {e}")
+    
+    # Models will be loaded on first use (lazy loading)
+    logger.info("Backend ready. Models will load on first request.")
+    
+    yield
+
+
+app = FastAPI(
+    title="Scenic AI Backend",
+    version="0.2.0",
+    lifespan=lifespan,
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:8080", "http://localhost:5173"],
@@ -13,7 +39,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 注册路由
 app.include_router(chat.router, prefix="/api", tags=["chat"])
 
 

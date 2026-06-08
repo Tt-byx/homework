@@ -1,4 +1,5 @@
-<script setup>
+﻿<script setup>
+import { onMounted, onUnmounted } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import MessageList from '@/components/chat/MessageList.vue'
@@ -6,13 +7,31 @@ import ChatInput from '@/components/chat/ChatInput.vue'
 
 const chatStore = useChatStore()
 
-function handleSend(message) {
-  chatStore.sendMessage(message)
+function handleSendText(message) {
+  chatStore.sendTextMessage(message)
 }
+
+function handleSendVoice(audioBlob, format) {
+  chatStore.sendVoiceMessage(audioBlob, format)
+}
+
+onMounted(() => {
+  chatStore.initWebSocket()
+})
+
+onUnmounted(() => {
+  chatStore.destroy()
+})
 </script>
 
 <template>
   <div class="chat-view">
+    <!-- 连接状态指示 -->
+    <div v-if="!chatStore.isWsConnected" class="connection-status">
+      <el-icon class="is-loading"><Loading /></el-icon>
+      <span>正在连接服务器...</span>
+    </div>
+
     <div class="chat-container">
       <MessageList :messages="chatStore.messages" :loading="chatStore.loading">
         <ChatMessage
@@ -21,7 +40,11 @@ function handleSend(message) {
           :message="msg"
         />
       </MessageList>
-      <ChatInput :loading="chatStore.loading" @send="handleSend" />
+      <ChatInput
+        :loading="chatStore.loading"
+        @send-text="handleSendText"
+        @send-voice="handleSendVoice"
+      />
     </div>
   </div>
 </template>
@@ -34,6 +57,18 @@ function handleSend(message) {
   padding: 20px;
   display: flex;
   flex-direction: column;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #fdf6ec;
+  border-radius: 8px;
+  color: #e6a23c;
+  font-size: 13px;
+  margin-bottom: 12px;
 }
 
 .chat-container {

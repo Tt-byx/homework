@@ -1,4 +1,4 @@
-server:
+﻿server:
   port: 8080
 
 spring:
@@ -7,6 +7,10 @@ spring:
     username: root
     password: 123456
     driver-class-name: com.mysql.cj.jdbc.Driver
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
@@ -24,6 +28,11 @@ mybatis-plus:
 python:
   backend:
     url: http://localhost:8000
+
+# WebSocket 配置
+websocket:
+  max-text-message-size: 65536
+  max-binary-message-size: 10485760
 
 # 日志
 logging:

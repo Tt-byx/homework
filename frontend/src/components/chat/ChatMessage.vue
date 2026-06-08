@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 defineProps({
   message: {
     type: Object,
@@ -20,7 +20,7 @@ function formatTime(timestamp) {
 </script>
 
 <template>
-  <div class="chat-message" :class="message.role">
+  <div class="chat-message" :class="[message.role, { error: message.isError }]">
     <div class="avatar">
       <el-avatar v-if="message.role === 'user'" :size="36" style="background: #409eff">
         <el-icon><User /></el-icon>
@@ -31,7 +31,9 @@ function formatTime(timestamp) {
     </div>
     <div class="content-wrapper">
       <div class="bubble" :class="message.role">
-        {{ message.content }}
+        <!-- 语音消息标识 -->
+        <span v-if="message.isVoice" class="voice-tag">🎤</span>
+        <span class="text">{{ message.content }}</span>
       </div>
       <div class="time">{{ formatTime(message.timestamp) }}</div>
     </div>
@@ -53,6 +55,12 @@ function formatTime(timestamp) {
 
 .chat-message.assistant {
   margin-right: auto;
+}
+
+.chat-message.error .bubble.assistant {
+  background: #fef0f0;
+  border-color: #fbc4c4;
+  color: #f56c6c;
 }
 
 .content-wrapper {
@@ -84,6 +92,10 @@ function formatTime(timestamp) {
   color: #303133;
   border: 1px solid #e4e7ed;
   border-top-left-radius: 4px;
+}
+
+.voice-tag {
+  margin-right: 4px;
 }
 
 .time {
