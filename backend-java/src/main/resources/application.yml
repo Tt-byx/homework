@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 10086
 
 spring:
   datasource:
@@ -10,6 +10,15 @@ spring:
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+# 文件上传目录
+scenic:
+  upload:
+    dir: D:/scenic_uploads
 
 # MyBatis-Plus
 mybatis-plus:

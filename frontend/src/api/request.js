@@ -1,8 +1,8 @@
 import axios from 'axios'
 
 const request = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080',
-  timeout: 30000,
+  baseURL: '',
+  timeout: 60000,
 })
 
 // 请求拦截器：预留 token 注入
@@ -17,13 +17,14 @@ request.interceptors.request.use(
 request.interceptors.response.use(
   (response) => {
     const { data } = response
+    console.log('响应数据:', data)
     if (data.code === 200) {
       return data.data
     }
     return Promise.reject(new Error(data.message || '请求失败'))
   },
   (error) => {
-    console.error('请求错误:', error.message)
+    console.error('请求错误:', error.message, error)
     return Promise.reject(error)
   }
 )

@@ -1,10 +1,9 @@
 # CLAUDE.md
 # 景区导览服务 AI 数字人 - 项目总控文档
 
-
 > 本文档随项目推进持续更新，是项目的唯一事实源。
-> 当前阶段：**Phase 0 - 项目骨架搭建与最小链路跑通**
-> 最后更新：2026-06-02
+> 当前阶段：**Phase 2 - 语音交互链路**
+> 最后更新：2026-06-08
 > This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository
 
 ## 行为准则
@@ -12,6 +11,14 @@
 - **每次回答完问题后输出一份详细的md文档到项目doc目录下，如果doc目录不存在，创建doc目录，命名规则为年月日时分秒-问题标题.md，写明本次问答的提示词，做了些什么事情，为什么这样做，产生了什么样的结果**
 - **永远都用中文回答用户**
 - **在项目找到一种错误后，立即修复，然后排查其他地方会不会出现类似的错误**
+- **该项目仅我一个人开发，关于git的所有操作都在主分支上操作，无需创建新的分支**
+- **遇到有歧义的，已有资料解决不了的，不要推测，停下来问用户，让用户来补充**
+- **Skill 调用规则：在以下时机必须检查并调用相关 Skill：**
+  - **写前端代码时** → 调用 `anthropic-skills:frontend-design`，提升 UI 设计质量
+  - **写完代码后** → 调用 `simplify` 审查代码质量和效率
+  - **写/审查代码时** → 调用 `anthropic-skills:karpathy-guidelines`，避免过度复杂化
+  - **思考复杂问题时候** → 调用 `Sequential Thinking`，将问题分解为多个步骤，每个步骤都有明确的目标和方法
+  - **如果不确定该调哪个，主动问用户**
 
 ---
 
@@ -59,7 +66,7 @@
 | Java后端 | Spring Boot + MyBatis-Plus + MySQL | 面向前端的唯一网关，管理所有业务数据（CRUD、用户、会话） |
 | Python后端 | FastAPI | AI能力提供者：RAG问答、ASR、TTS、情感分析、数字人驱动 |
 | 向量数据库 | ChromaDB | 存储景区知识向量，Python端直接调用 |
-| 大模型 | 通义千问API（Qwen）或智谱GLM API | 问答推理，通过API调用 |
+| 大模型 | 小米 MiMo API（mimo-v2.5-pro）| 问答推理，OpenAI兼容格式调用 |
 | 语音识别 | FunASR（阿里开源） | 中文ASR，Python端部署 |
 | 语音合成 | CosyVoice（阿里开源） | 中文TTS，支持音色定制 |
 | 数字人驱动 | SadTalker 或 MuseTalk | 2D数字人，输入图片+音频 → 生成口型同步视频 |
@@ -216,12 +223,28 @@
 
 > 完成后更新此处，并推进阶段标记。
 
-**当前：Phase 0 - 项目骨架搭建**
+**当前：Phase 2 - 语音交互链路**
 
-- [ ] 下载示范景区资料包，三人一起浏览内容
-- [ ] 搭建Git仓库，建立 main / dev / 个人分支
-- [ ] 初始化 Vue3 项目骨架
-- [ ] 初始化 Spring Boot 项目骨架
-- [ ] 初始化 FastAPI 项目骨架，接入大模型API
-- [ ] 设计初始数据库表结构
-- [ ] 跑通文字对话全链路（前端 → Java → Python → 大模型 → 原路返回）
+Phase 0 已完成：
+- [x] 搭建Git仓库，建立 main 分支
+- [x] 初始化 Vue3 项目骨架（游客端+管理后台布局、聊天页面）
+- [x] 初始化 Spring Boot 项目骨架（聊天接口、REST转发）
+- [x] 初始化 FastAPI 项目骨架，接入小米 MiMo API
+- [x] 设计初始数据库表结构（5张表）
+- [x] 跑通文字对话全链路（前端 → Java → Python → MiMo → 原路返回）
+
+Phase 1 已完成：
+- [x] 获取并解析示范景区资料包（2个docx），提取纯文本
+- [x] 文档切片（300-500字 chunk，50字重叠），共183个chunk
+- [x] Embedding 向量化（SiliconFlow BAAI/bge-m3），存入 ChromaDB
+- [x] 实现 RAG 检索链路（Top-K=5 检索 → 防幻觉 Prompt → MiMo 生成）
+- [x] 建标准测试集（20问题），准确率 90%（18/20）
+- [x] 管理后台知识库管理页面（上传、列表、删除、重处理、状态轮询）
+
+Phase 2 待办：
+- [ ] Python端集成 FunASR（语音识别）
+- [ ] Python端集成 CosyVoice（语音合成）
+- [ ] 统一对话接口（音频/文字自动判断）
+- [ ] 流式输出（SSE或WebSocket）
+- [ ] 前端录音功能、语音播放、对话气泡UI
+- [ ] Java后端 WebSocket 管理实时对话会话

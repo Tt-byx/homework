@@ -87,6 +87,7 @@ docker/data/
 # 上传文件（运行时生成）
 # ========================
 uploads/
+scenic_uploads/
 
 # ========================
 # Claude Code 本地配置

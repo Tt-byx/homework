@@ -20,6 +20,7 @@ export const useChatStore = defineStore('chat', () => {
         timestamp: Date.now(),
       })
     } catch (err) {
+      console.error('聊天请求失败:', err.message, err)
       messages.value.push({
         role: 'assistant',
         content: '抱歉，暂时无法回答，请稍后再试。',

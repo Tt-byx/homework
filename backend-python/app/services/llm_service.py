@@ -14,13 +14,29 @@ SYSTEM_PROMPT = """你是一个专业的景区导览AI数字人助手。
 
 
 async def chat_with_mimo(message: str) -> str:
-    """调用 MiMo 大模型 API（OpenAI 兼容格式）"""
+    """调用 MiMo 大模型 API（OpenAI 兼容格式）- 无知识库版本"""
     response = await client.chat.completions.create(
         model=settings.mimo_model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": message},
         ],
+        temperature=0.7,
+        max_tokens=1024,
+    )
+    return response.choices[0].message.content
+
+
+async def chat_with_rag(message: str) -> str:
+    """RAG 增强对话：检索知识库 → 拼接上下文 → 调用大模型"""
+    from app.services.rag_service import retrieve_context, build_rag_prompt
+
+    context = await retrieve_context(message)
+    messages = build_rag_prompt(context, message)
+
+    response = await client.chat.completions.create(
+        model=settings.mimo_model,
+        messages=messages,
         temperature=0.7,
         max_tokens=1024,
     )
