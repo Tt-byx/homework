@@ -1,18 +1,16 @@
-﻿package com.scenic.ai.websocket;
+package com.scenic.ai.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -26,6 +24,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     private final Map<String, byte[]> pendingAudio = new ConcurrentHashMap<>();
+    private final Map<String, String> pendingAudioSessionId = new ConcurrentHashMap<>();
+    private final Map<String, String> pendingAudioFormat = new ConcurrentHashMap<>();
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -33,7 +33,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     @Value("${python.backend.url:http://localhost:8000}")
     private String pythonBackendUrl;
 
-    private final HttpClient httpClient = HttpClient.newBuilder().build();
+    @Autowired
+    private RestTemplate restTemplate;
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     @Override
@@ -55,8 +56,10 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                     handleTextChat(session, msg);
                     break;
                 case "audio":
-                    // 音频元数据，标记此 session 下一条二进制帧为音频数据
+                    // 音频元数据，保存 session_id 和 format，等待二进制帧
                     pendingAudio.put(session.getId(), new byte[0]);
+                    pendingAudioSessionId.put(session.getId(), msg.getSessionId());
+                    pendingAudioFormat.put(session.getId(), msg.getFormat() != null ? msg.getFormat() : "webm");
                     log.info("收到音频元数据，等待音频二进制帧: session={}", session.getId());
                     break;
                 default:
@@ -85,30 +88,57 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         sessions.remove(session.getId());
         pendingAudio.remove(session.getId());
+        pendingAudioSessionId.remove(session.getId());
+        pendingAudioFormat.remove(session.getId());
         log.info("WebSocket 连接关闭: {}", session.getId());
     }
 
     /**
-     * 处理文字对话：转发到 Python SSE 端点，流式回传给前端
+     * 处理文字对话：用 RestTemplate 调 Python /api/chat (JSON)
      */
     private void handleTextChat(WebSocketSession session, WebSocketMessage msg) {
         CompletableFuture.runAsync(() -> {
             try {
-                // 构建 multipart/form-data 请求到 Python /api/chat/stream
-                String boundary = "----WebKitFormBoundary" + System.currentTimeMillis();
-                String body = buildMultipartBody(boundary, msg.getContent(), msg.getSessionId());
+                Map<String, Object> requestBody = new java.util.HashMap<>();
+                requestBody.put("message", msg.getContent());
+                if (msg.getSessionId() != null) {
+                    requestBody.put("session_id", msg.getSessionId());
+                }
 
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(pythonBackendUrl + "/api/chat/stream"))
-                        .header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                        .POST(HttpRequest.BodyPublishers.ofString(body))
-                        .build();
+                HttpHeaders headers = new HttpHeaders();
+                headers.setContentType(MediaType.APPLICATION_JSON);
+                HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-                // 发送请求并处理 SSE 流
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                log.info("转发文字消息到 Python: {}", msg.getContent().length() > 50
+                        ? msg.getContent().substring(0, 50) + "..." : msg.getContent());
 
-                // 解析 SSE 响应并转发给前端
-                processSSEResponse(session, response.body());
+                ResponseEntity<Map> response = restTemplate.exchange(
+                        pythonBackendUrl + "/api/chat",
+                        HttpMethod.POST,
+                        entity,
+                        Map.class
+                );
+
+                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                    Map<String, Object> result = response.getBody();
+                    String reply = (String) result.get("reply");
+                    String sessionId = (String) result.get("session_id");
+                    String audio = (String) result.get("audio");
+
+                    // 发送文字
+                    sendToClient(session, WebSocketMessage.textChunk(reply));
+
+                    // 发送音频（如果有）
+                    if (audio != null && !audio.isEmpty()) {
+                        sendToClient(session, WebSocketMessage.audioChunk(audio, "wav"));
+                    }
+
+                    // 发送完成标记
+                    sendToClient(session, WebSocketMessage.done(sessionId, reply));
+                } else {
+                    log.error("Python 返回错误: {}", response.getStatusCode());
+                    trySendToClient(session, WebSocketMessage.error("AI服务返回错误"));
+                }
 
             } catch (Exception e) {
                 log.error("转发文字消息到 Python 失败: {}", e.getMessage(), e);
@@ -118,23 +148,45 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     }
 
     /**
-     * 处理音频对话：转发音频到 Python SSE 端点
+     * 处理音频对话：用 RestTemplate 转发音频到 Python /api/chat/stream
      */
     private void proxyAudioToPython(WebSocketSession session, byte[] audioData) {
         try {
-            // 构建 multipart/form-data 请求（包含音频文件）
-            String boundary = "----WebKitFormBoundary" + System.currentTimeMillis();
-            String sessionId = null; // 可从 pendingAudio 中获取元数据
-            byte[] body = buildMultipartAudioBody(boundary, audioData, sessionId);
+            String sessionId = pendingAudioSessionId.remove(session.getId());
+            String rawFormat = pendingAudioFormat.remove(session.getId());
+            final String audioFormat = rawFormat != null ? rawFormat : "webm";
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(pythonBackendUrl + "/api/chat/stream"))
-                    .header("Content-Type", "multipart/form-data; boundary=" + boundary)
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                    .build();
+            // 构建 multipart 请求
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            processSSEResponse(session, response.body());
+            org.springframework.util.LinkedMultiValueMap<String, Object> body = new org.springframework.util.LinkedMultiValueMap<>();
+            body.add("audio", new org.springframework.core.io.ByteArrayResource(audioData) {
+                @Override
+                public String getFilename() {
+                    return "audio." + audioFormat;
+                }
+            });
+            if (sessionId != null) {
+                body.add("session_id", sessionId);
+            }
+
+            HttpEntity<org.springframework.util.LinkedMultiValueMap<String, Object>> entity = new HttpEntity<>(body, headers);
+
+            log.info("转发音频到 Python: {} bytes, format={}", audioData.length, audioFormat);
+
+            ResponseEntity<String> response = restTemplate.exchange(
+                    pythonBackendUrl + "/api/chat/stream",
+                    HttpMethod.POST,
+                    entity,
+                    String.class
+            );
+
+            if (response.getBody() != null) {
+                processSSEResponse(session, response.getBody());
+            } else {
+                trySendToClient(session, WebSocketMessage.error("语音处理返回空"));
+            }
 
         } catch (Exception e) {
             log.error("转发音频到 Python 失败: {}", e.getMessage(), e);
@@ -190,48 +242,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                 }
             }
         }
-    }
-
-    /**
-     * 构建 multipart/form-data 文本请求体
-     */
-    private String buildMultipartBody(String boundary, String message, String sessionId) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("--").append(boundary).append("\r\n");
-        sb.append("Content-Disposition: form-data; name=\"message\"\r\n\r\n");
-        sb.append(message).append("\r\n");
-
-        if (sessionId != null) {
-            sb.append("--").append(boundary).append("\r\n");
-            sb.append("Content-Disposition: form-data; name=\"session_id\"\r\n\r\n");
-            sb.append(sessionId).append("\r\n");
-        }
-
-        sb.append("--").append(boundary).append("--\r\n");
-        return sb.toString();
-    }
-
-    /**
-     * 构建 multipart/form-data 音频请求体
-     */
-    private byte[] buildMultipartAudioBody(String boundary, byte[] audioData, String sessionId) {
-        StringBuilder header = new StringBuilder();
-        header.append("--").append(boundary).append("\r\n");
-        header.append("Content-Disposition: form-data; name=\"audio\"; filename=\"audio.webm\"\r\n");
-        header.append("Content-Type: audio/webm\r\n\r\n");
-
-        byte[] headerBytes = header.toString().getBytes();
-
-        String footer = "\r\n--" + boundary + "--\r\n";
-        byte[] footerBytes = footer.getBytes();
-
-        // 合并 header + audioData + footer
-        byte[] result = new byte[headerBytes.length + audioData.length + footerBytes.length];
-        System.arraycopy(headerBytes, 0, result, 0, headerBytes.length);
-        System.arraycopy(audioData, 0, result, headerBytes.length, audioData.length);
-        System.arraycopy(footerBytes, 0, result, headerBytes.length + audioData.length, footerBytes.length);
-
-        return result;
     }
 
     /**

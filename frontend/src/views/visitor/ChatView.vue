@@ -11,10 +11,6 @@ function handleSendText(message) {
   chatStore.sendTextMessage(message)
 }
 
-function handleSendVoice(audioBlob, format) {
-  chatStore.sendVoiceMessage(audioBlob, format)
-}
-
 onMounted(() => {
   chatStore.initWebSocket()
 })
@@ -43,7 +39,6 @@ onUnmounted(() => {
       <ChatInput
         :loading="chatStore.loading"
         @send-text="handleSendText"
-        @send-voice="handleSendVoice"
       />
     </div>
   </div>

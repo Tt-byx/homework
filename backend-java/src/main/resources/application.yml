@@ -1,5 +1,5 @@
 ﻿server:
-  port: 8080
+  port: 10086
 
 spring:
   datasource:
@@ -27,7 +27,7 @@ mybatis-plus:
 # Python 后端地址
 python:
   backend:
-    url: http://localhost:8000
+    url: http://localhost:9000
 
 # WebSocket 配置
 websocket:
@@ -38,3 +38,8 @@ websocket:
 logging:
   level:
     com.scenic.ai: debug
+
+# 文件上传目录
+scenic:
+  upload:
+    dir: D:/scenic_uploads

@@ -1,8 +1,9 @@
-﻿<script setup>
+<script setup>
 import { ref, onUnmounted } from 'vue'
 import { VoiceRecorder } from './VoiceRecorder.js'
+import { recognizeSpeech } from '@/api/chat'
 
-const emit = defineEmits(['sendText', 'sendVoice'])
+const emit = defineEmits(['sendText'])
 
 const props = defineProps({
   loading: {
@@ -13,6 +14,7 @@ const props = defineProps({
 
 const inputText = ref('')
 const isRecording = ref(false)
+const isRecognizing = ref(false)
 const recordingError = ref('')
 const recordingDuration = ref(0)
 
@@ -34,18 +36,23 @@ function handleKeydown(e) {
   }
 }
 
-// --- 语音录制 ---
-async function startRecording() {
-  if (props.loading || isRecording.value) return
+// --- 语音录入 → ASR → 填入输入框 ---
+async function toggleRecording() {
+  if (props.loading || isRecognizing.value) return
+  if (isRecording.value) {
+    await stopAndRecognize()
+  } else {
+    await startRecording()
+  }
+}
 
+async function startRecording() {
   recordingError.value = ''
   recordingDuration.value = 0
 
   try {
     await recorder.start()
     isRecording.value = true
-
-    // 计时器：显示录音时长
     durationTimer = setInterval(() => {
       recordingDuration.value = Math.floor((Date.now() - recorder.startTime) / 1000)
     }, 200)
@@ -55,10 +62,8 @@ async function startRecording() {
   }
 }
 
-async function stopRecording() {
-  if (!isRecording.value) return
+async function stopAndRecognize() {
   isRecording.value = false
-
   if (durationTimer) {
     clearInterval(durationTimer)
     durationTimer = null
@@ -66,28 +71,31 @@ async function stopRecording() {
 
   try {
     const result = await recorder.stop()
-    if (result && result.blob && result.blob.size > 1000) {
-      // 录音时长 > 0.5s 才发送
-      if (result.duration >= 500) {
-        emit('sendVoice', result.blob, result.format)
-      } else {
-        recordingError.value = '录音时间太短'
-        setTimeout(() => { recordingError.value = '' }, 2000)
-      }
+    if (!result || !result.blob || result.blob.size < 1000 || result.duration < 500) {
+      recordingError.value = '录音时间太短，至少 0.5 秒'
+      setTimeout(() => { recordingError.value = '' }, 2000)
+      return
+    }
+
+    // 调用 ASR 识别
+    isRecognizing.value = true
+    const asrResult = await recognizeSpeech(result.blob, result.format)
+
+    if (asrResult && asrResult.text && asrResult.text.trim()) {
+      // 识别结果填入输入框
+      inputText.value = asrResult.text.trim()
+      // 聚焦输入框方便用户编辑
+      const textarea = document.querySelector('.chat-input .el-textarea textarea')
+      if (textarea) textarea.focus()
+    } else {
+      recordingError.value = '未识别到语音内容'
+      setTimeout(() => { recordingError.value = '' }, 2000)
     }
   } catch (err) {
-    recordingError.value = err.message || '录音失败'
+    recordingError.value = '语音识别失败: ' + (err.message || '未知错误')
     setTimeout(() => { recordingError.value = '' }, 3000)
-  }
-}
-
-function cancelRecording() {
-  if (!isRecording.value) return
-  isRecording.value = false
-  recorder.cancel()
-  if (durationTimer) {
-    clearInterval(durationTimer)
-    durationTimer = null
+  } finally {
+    isRecognizing.value = false
   }
 }
 
@@ -110,47 +118,50 @@ onUnmounted(() => {
       v-model="inputText"
       type="textarea"
       :rows="2"
-      placeholder="输入你的问题..."
+      placeholder="输入你的问题，或点击语音输入..."
       resize="none"
-      :disabled="loading || isRecording"
+      :disabled="loading || isRecording || isRecognizing"
       @keydown="handleKeydown"
     />
 
     <!-- 按钮区域 -->
     <div class="button-group">
-      <!-- 发送文字按钮 -->
       <el-button
         type="primary"
         :loading="loading"
-        :disabled="!inputText.trim() || isRecording"
+        :disabled="!inputText.trim() || isRecording || isRecognizing"
         @click="handleSend"
       >
         发送
       </el-button>
 
-      <!-- 按住说话按钮 -->
       <el-button
         :type="isRecording ? 'danger' : 'success'"
-        :disabled="loading"
-        @mousedown.prevent="startRecording"
-        @mouseup.prevent="stopRecording"
-        @mouseleave="cancelRecording"
-        @touchstart.prevent="startRecording"
-        @touchend.prevent="stopRecording"
-        @touchcancel="cancelRecording"
+        :disabled="loading || isRecognizing"
+        @click="toggleRecording"
       >
-        <el-icon v-if="!isRecording"><Microphone /></el-icon>
-        <span v-if="isRecording">松开结束</span>
-        <span v-else>按住说话</span>
+        <el-icon v-if="!isRecording && !isRecognizing"><Microphone /></el-icon>
+        <el-icon v-if="isRecognizing" class="is-loading"><Loading /></el-icon>
+        <span v-if="isRecognizing">识别中...</span>
+        <span v-else-if="isRecording">停止录音</span>
+        <span v-else>语音输入</span>
       </el-button>
     </div>
 
-    <!-- 录音状态指示器 -->
+    <!-- 录音状态 -->
     <div v-if="isRecording" class="recording-indicator">
       <div class="wave-animation">
         <span></span><span></span><span></span><span></span><span></span>
       </div>
+      <span class="recording-label">录音中</span>
       <span class="duration">{{ formatDuration(recordingDuration) }}</span>
+      <span class="recording-hint">点击「停止录音」进行识别</span>
+    </div>
+
+    <!-- 识别中状态 -->
+    <div v-if="isRecognizing" class="recognizing-indicator">
+      <el-icon class="is-loading"><Loading /></el-icon>
+      <span>正在识别语音...</span>
     </div>
 
     <!-- 错误提示 -->
@@ -179,7 +190,6 @@ onUnmounted(() => {
   min-width: 80px;
 }
 
-/* 录音指示器 */
 .recording-indicator {
   display: flex;
   align-items: center;
@@ -192,12 +202,33 @@ onUnmounted(() => {
   font-size: 14px;
 }
 
+.recognizing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #fdf6ec;
+  border-radius: 8px;
+  color: #e6a23c;
+  font-size: 14px;
+}
+
+.recording-label {
+  font-weight: 600;
+}
+
 .duration {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-/* 波浪动画 */
+.recording-hint {
+  font-size: 12px;
+  color: #e6a23c;
+  margin-left: auto;
+}
+
 .wave-animation {
   display: flex;
   align-items: center;
@@ -224,7 +255,6 @@ onUnmounted(() => {
   50% { height: 20px; }
 }
 
-/* 错误提示 */
 .recording-error {
   margin-top: 6px;
   padding: 4px 8px;

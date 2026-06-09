@@ -1,4 +1,4 @@
-﻿package com.scenic.ai.config;
+package com.scenic.ai.config;
 
 import com.scenic.ai.websocket.ChatWebSocketHandler;
 import org.springframework.beans.factory.annotation.Autowired;

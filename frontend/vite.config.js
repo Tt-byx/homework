@@ -16,8 +16,13 @@ export default defineConfig({
         target: 'http://localhost:10086',
         changeOrigin: true,
       },
+      '/py-api': {
+        target: 'http://localhost:9000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/py-api/, '/api'),
+      },
       '/ws': {
-        target: 'ws://localhost:8080',
+        target: 'ws://localhost:10086',
         ws: true,
         changeOrigin: true,
       },

@@ -1,177 +1,63 @@
-import asyncio
 import logging
-import os
-import re
-from typing import Optional
+from app.core.config import settings
+from app.services.embedding_service import embed_query
+from app.services.vector_store import query as chroma_query
 
 logger = logging.getLogger(__name__)
 
-try:
-    import chromadb
-    CHROMADB_AVAILABLE = True
-except ImportError:
-    CHROMADB_AVAILABLE = False
-    logger.warning("chromadb not installed, RAG disabled. Install: pip install chromadb")
+DISTANCE_THRESHOLD = 0.7  # cosine 距离阈值，越小越相关
 
 
-class RAGService:
+async def retrieve_context(query: str, top_k: int = None) -> str:
+    """检索知识库，返回格式化的上下文文本"""
+    if top_k is None:
+        top_k = settings.rag_top_k
 
-    def __init__(self, persist_dir: str = "./data/chroma_db",
-                 collection_name: str = "scenic_knowledge"):
-        self.persist_dir = persist_dir
-        self.collection_name = collection_name
-        self._client = None
-        self._collection = None
-        self._initialized = False
+    try:
+        query_embedding = await embed_query(query)
+        results = chroma_query(query_embedding, top_k=top_k)
+    except Exception as e:
+        logger.warning(f"知识库检索失败，将使用无上下文模式: {e}")
+        return ""
 
-    @property
-    def is_available(self) -> bool:
-        return CHROMADB_AVAILABLE and self._initialized
+    if not results:
+        return ""
 
-    async def init(self):
-        if not CHROMADB_AVAILABLE:
-            logger.warning("chromadb not installed, skip RAG init")
-            return
+    context_parts = []
+    for i, r in enumerate(results):
+        if r["distance"] > DISTANCE_THRESHOLD:
+            continue
+        context_parts.append(
+            f"【参考资料{i + 1}】(来源: {r['doc_title']})\n{r['text']}"
+        )
 
-        try:
-            self._client = chromadb.PersistentClient(path=self.persist_dir)
-            self._collection = self._client.get_or_create_collection(
-                name=self.collection_name,
-                metadata={"hnsw:space": "cosine"}
-            )
-            count = self._collection.count()
-            self._initialized = True
-            logger.info(f"ChromaDB init OK, docs: {count}")
-        except Exception as e:
-            logger.error(f"ChromaDB init failed: {e}")
+    if not context_parts:
+        logger.info(f"检索到 {len(results)} 个 chunk，但相似度均低于阈值，跳过上下文注入")
+        return ""
 
-    async def search(self, query: str, top_k: int = 3) -> list[str]:
-        if not self.is_available:
-            return []
-
-        loop = asyncio.get_event_loop()
-
-        def _query():
-            results = self._collection.query(
-                query_texts=[query],
-                n_results=top_k,
-            )
-            if results and results["documents"]:
-                return results["documents"][0]
-            return []
-
-        return await loop.run_in_executor(None, _query)
-
-    def build_prompt(self, query: str, context_chunks: list[str]) -> str:
-        if not context_chunks:
-            return query
-
-        context = "\n---\n".join(context_chunks)
-        return f"Please answer based on the following reference materials. If no relevant info, use your knowledge.\n\nReference:\n{context}\n\nQuestion: {query}"
-
-    def _split_text(self, text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
-        text = re.sub(r"\s+", " ", text.strip())
-        chunks = []
-        for i in range(0, len(text), chunk_size - overlap):
-            chunk = text[i:i + chunk_size]
-            if chunk:
-                chunks.append(chunk)
-        return chunks
-
-    async def ingest_text(self, text: str, doc_id: str, metadata: Optional[dict] = None):
-        if not self.is_available:
-            logger.warning("RAG not available, cannot ingest")
-            return
-
-        chunks = self._split_text(text)
-        if not chunks:
-            return
-
-        loop = asyncio.get_event_loop()
-
-        def _insert():
-            ids = [f"{doc_id}_chunk_{i}" for i in range(len(chunks))]
-            metadatas = []
-            for i, chunk in enumerate(chunks):
-                meta = {"doc_id": doc_id, "chunk_index": i}
-                if metadata:
-                    meta.update(metadata)
-                metadatas.append(meta)
-            self._collection.upsert(ids=ids, documents=chunks, metadatas=metadatas)
-
-        await loop.run_in_executor(None, _insert)
-        logger.info(f"Doc {doc_id} ingested, {len(chunks)} chunks")
-
-    async def ingest_file(self, file_path: str) -> str:
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
-
-        file_name = os.path.basename(file_path)
-        doc_id = os.path.splitext(file_name)[0]
-
-        if file_path.endswith(('.txt', '.md')):
-            with open(file_path, 'r', encoding='utf-8') as f:
-                text = f.read()
-        elif file_path.endswith('.pdf'):
-            try:
-                import fitz
-                doc = fitz.open(file_path)
-                text = ""
-                for page in doc:
-                    text += page.get_text()
-                doc.close()
-            except ImportError:
-                raise RuntimeError("PDF requires PyMuPDF: pip install PyMuPDF")
-        elif file_path.endswith('.docx'):
-            try:
-                from docx import Document
-                doc = Document(file_path)
-                text = "\n".join([p.text for p in doc.paragraphs])
-            except ImportError:
-                raise RuntimeError("Word requires python-docx: pip install python-docx")
-        else:
-            raise ValueError(f"Unsupported format: {file_path}")
-
-        await self.ingest_text(text, doc_id, metadata={"file_name": file_name})
-        return doc_id
-
-    async def ingest_from_directory(self, dir_path: str):
-        if not os.path.exists(dir_path):
-            logger.warning(f"Directory not found: {dir_path}")
-            return
-
-        supported_ext = ('.txt', '.md', '.pdf', '.docx')
-        files = [
-            os.path.join(dir_path, f)
-            for f in os.listdir(dir_path)
-            if f.endswith(supported_ext)
-        ]
-
-        if not files:
-            logger.warning(f"No supported docs in {dir_path}")
-            return
-
-        logger.info(f"Ingesting {len(files)} docs...")
-        for file_path in files:
-            try:
-                await self.ingest_file(file_path)
-                logger.info(f"Ingested: {file_path}")
-            except Exception as e:
-                logger.error(f"Failed {file_path}: {e}")
-
-    async def delete_doc(self, doc_id: str):
-        if not self.is_available:
-            return
-
-        loop = asyncio.get_event_loop()
-
-        def _delete():
-            results = self._collection.get(where={"doc_id": doc_id})
-            if results and results["ids"]:
-                self._collection.delete(ids=results["ids"])
-
-        await loop.run_in_executor(None, _delete)
-        logger.info(f"Doc {doc_id} deleted")
+    context = "\n\n".join(context_parts)
+    logger.info(f"检索到 {len(context_parts)} 条相关资料")
+    return context
 
 
-rag_service = RAGService()
+def build_rag_prompt(context: str, query: str) -> list[dict]:
+    """组装带知识库上下文的消息列表"""
+    system_content = (
+        "你是一个专业的景区导览AI数字人助手。\n"
+        "你的职责是为游客提供关于景区的准确、友好的信息和建议。\n\n"
+        "【重要规则】\n"
+        "1. 你必须仅根据以下参考资料回答问题。不要编造或推测资料中没有的信息。\n"
+        "2. 如果参考资料中没有相关信息，请诚实告知「根据现有资料，我暂时无法回答这个问题」。\n"
+        "3. 回答时请用简洁、亲切的语气。\n"
+        "4. 适当引用具体景点名称和数据，增加回答的可信度。"
+    )
+
+    if context:
+        system_content += f"\n\n【参考资料】\n{context}"
+    else:
+        system_content += "\n\n【注意】当前知识库中没有找到与问题相关的资料，请告知用户你暂时无法回答。"
+
+    return [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": query},
+    ]

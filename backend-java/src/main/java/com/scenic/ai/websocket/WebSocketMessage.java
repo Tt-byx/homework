@@ -1,4 +1,4 @@
-﻿package com.scenic.ai.websocket;
+package com.scenic.ai.websocket;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 

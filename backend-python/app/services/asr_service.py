@@ -1,135 +1,81 @@
-import asyncio
+import base64
 import logging
-import numpy as np
+import os
+
+import httpx
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Global model cache
-_model_cache = {}
-
 
 class ASRService:
+    """MiMo ASR 语音识别服务
 
-    def __init__(self, server_url: str = "ws://localhost:10095"):
-        self.server_url = server_url
-        self._local_model = None
-        self._use_local = False
-        self._initialized = False
+    调用 MiMo mimo-v2.5-asr 模型。
+    消息格式：user 消息使用 input_audio 类型（base64 Data URL）。
+    """
 
-    async def _ensure_initialized(self):
-        if self._initialized:
-            return
-        if 'asr' in _model_cache:
-            self._local_model = _model_cache['asr']
-            self._use_local = True
-            self._initialized = True
-            return
-        await self.init_local_model()
-
-    async def init_local_model(self):
-        try:
-            from funasr import AutoModel
-            logger.info("Loading FunASR model...")
-            self._local_model = AutoModel(
-                model="paraformer-zh",
-                vad_model="fsmn-vad",
-                punc_model="ct-punc",
-                disable_update=True,
-            )
-            self._use_local = True
-            self._initialized = True
-            _model_cache['asr'] = self._local_model
-            logger.info("FunASR local model loaded")
-        except ImportError:
-            logger.warning("funasr not installed, will use remote ASR")
-        except Exception as e:
-            logger.warning(f"FunASR local model failed: {e}, will use remote ASR")
-
-    def start_background_loading(self):
-        import threading
-        def _load():
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(self.init_local_model())
-        thread = threading.Thread(target=_load, daemon=True)
-        thread.start()
-        logger.info("ASR model loading started in background")
+    ASR_MODEL = "mimo-v2.5-asr"
 
     async def transcribe(self, audio_bytes: bytes, audio_format: str = "wav") -> str:
-        await self._ensure_initialized()
-        if self._use_local and self._local_model:
-            return await self._transcribe_local(audio_bytes)
-        else:
-            return await self._transcribe_remote(audio_bytes, audio_format)
-
-    async def _transcribe_local(self, audio_bytes: bytes) -> str:
-        import tempfile
-        import os
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(audio_bytes)
-            temp_path = f.name
-
-        try:
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: self._local_model.generate(input=temp_path)
-            )
-            if result and len(result) > 0:
-                return result[0]["text"]
+        """将音频 bytes 转为文字"""
+        if not audio_bytes:
             return ""
-        finally:
-            os.unlink(temp_path)
 
-    async def _transcribe_remote(self, audio_bytes: bytes, audio_format: str) -> str:
-        try:
-            import websockets
-            import json
+        # 编码为 Data URL
+        audio_b64 = base64.b64encode(audio_bytes).decode()
+        data_url = f"data:audio/{audio_format};base64,{audio_b64}"
 
-            uri = self.server_url
-            async with websockets.connect(uri, max_size=2**24) as ws:
-                config = {
-                    "mode": "offline",
-                    "audio_fs": 16000,
-                    "wav_name": "user_audio",
-                    "wav_format": audio_format,
-                    "is_speaking": True,
-                    "chunk_size": [5, 10, 5],
-                    "itn": True,
-                    "wav_format_type": "PCM16",
+        # 构建请求（OpenAI SDK 不直接支持 input_audio，用 httpx 手动发）
+        request_body = {
+            "model": self.ASR_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": data_url,
+                                "format": audio_format,
+                            },
+                        }
+                    ],
                 }
-                await ws.send(json.dumps(config))
+            ],
+        }
 
-                chunk_size = 9600
-                for i in range(0, len(audio_bytes), chunk_size):
-                    chunk = audio_bytes[i:i + chunk_size]
-                    await ws.send(chunk)
-                    await asyncio.sleep(0.01)
+        # 禁用代理（避免系统代理阻断 MiMo API）
+        proxy_keys = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']
+        saved = {k: os.environ.pop(k, None) for k in proxy_keys}
 
-                await ws.send(json.dumps({"is_speaking": False}))
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{settings.mimo_base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.mimo_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=request_body,
+                )
 
-                result_text = ""
-                while True:
-                    try:
-                        msg = await asyncio.wait_for(ws.recv(), timeout=10)
-                        data = json.loads(msg)
-                        if "text" in data:
-                            result_text += data["text"]
-                        if data.get("is_final", False):
-                            break
-                    except asyncio.TimeoutError:
-                        break
+            if resp.status_code != 200:
+                raise RuntimeError(f"ASR API 返回 {resp.status_code}: {resp.text[:200]}")
 
-                return result_text.strip()
+            data = resp.json()
+            text = data["choices"][0]["message"]["content"] or ""
+            return text.strip()
 
-        except ImportError:
-            logger.error("websockets not installed")
-            raise RuntimeError("ASR service unavailable: websockets not installed")
         except Exception as e:
-            logger.error(f"ASR remote service failed: {e}")
-            raise RuntimeError(f"ASR service failed: {str(e)}")
+            logger.error(f"MiMo ASR 识别失败: {e}")
+            raise RuntimeError(f"ASR 识别失败: {str(e)}")
+
+        finally:
+            # 恢复代理设置
+            for k, v in saved.items():
+                if v is not None:
+                    os.environ[k] = v
 
 
 asr_service = ASRService()

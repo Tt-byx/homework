@@ -6,7 +6,7 @@
  *   发送: {type: "text", content, session_id} | {type: "audio", format, session_id} + binary
  *   接收: {type: "text_chunk"|"audio_chunk"|"asr_result"|"done"|"error", ...}
  */
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws/chat'
+const WS_URL = import.meta.env.VITE_WS_URL || `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/chat`
 
 export class ChatWebSocket {
   constructor() {

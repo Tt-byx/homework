@@ -1,40 +1,30 @@
-﻿/**
+/**
  * 语音录音工具类
- * 基于 MediaRecorder API 实现按住录音
- *
- * 使用方式：
- *   const recorder = new VoiceRecorder()
- *   await recorder.start()
- *   // ... 用户松开按钮
- *   const blob = await recorder.stop()
+ * 使用 AudioContext 录制 PCM 数据，输出 WAV 格式
+ * WAV 格式可直接被 FunASR 识别，无需后端转码
  */
 export class VoiceRecorder {
   constructor() {
-    this.mediaRecorder = null
+    this.audioContext = null
     this.stream = null
-    this.chunks = []
+    this.source = null
+    this.processor = null
+    this.pcmChunks = []
     this.isRecording = false
     this.startTime = 0
+    this.sampleRate = 16000
   }
 
-  /**
-   * 检查浏览器是否支持录音
-   */
   static isSupported() {
-    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && (window.AudioContext || window.webkitAudioContext))
   }
 
-  /**
-   * 开始录音
-   * @returns {Promise<void>}
-   */
   async start() {
     if (this.isRecording) return
 
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: 16000,
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
@@ -42,20 +32,24 @@ export class VoiceRecorder {
         }
       })
 
-      // 选择最佳的 MIME 类型
-      const mimeType = this._getBestMimeType()
-      this.mediaRecorder = new MediaRecorder(this.stream, {
-        mimeType: mimeType,
-      })
+      const AudioCtx = window.AudioContext || window.webkitAudioContext
+      this.audioContext = new AudioContext({ sampleRate: this.sampleRate })
+      this.source = this.audioContext.createMediaStreamSource(this.stream)
 
-      this.chunks = []
-      this.mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          this.chunks.push(e.data)
-        }
+      // ScriptProcessorNode: 4096 samples per buffer, 1 channel
+      this.processor = this.audioContext.createScriptProcessor(4096, 1, 1)
+      this.pcmChunks = []
+
+      this.processor.onaudioprocess = (e) => {
+        if (!this.isRecording) return
+        const data = e.inputBuffer.getChannelData(0)
+        // 复制 Float32 数据
+        this.pcmChunks.push(new Float32Array(data))
       }
 
-      this.mediaRecorder.start(100) // 每 100ms 收集一块
+      this.source.connect(this.processor)
+      this.processor.connect(this.audioContext.destination)
+
       this.isRecording = true
       this.startTime = Date.now()
 
@@ -70,92 +64,103 @@ export class VoiceRecorder {
     }
   }
 
-  /**
-   * 停止录音并返回音频 Blob
-   * @returns {Promise<{blob: Blob, duration: number, format: string}>}
-   */
   stop() {
-    return new Promise((resolve, reject) => {
-      if (!this.isRecording || !this.mediaRecorder) {
+    return new Promise((resolve) => {
+      if (!this.isRecording) {
         resolve(null)
         return
       }
 
-      this.mediaRecorder.onstop = () => {
-        const duration = Date.now() - this.startTime
-        const format = this._getFormat()
-        const blob = new Blob(this.chunks, { type: this.mediaRecorder.mimeType })
-
-        this._cleanup()
-        resolve({ blob, duration, format })
-      }
-
-      this.mediaRecorder.onerror = (e) => {
-        this._cleanup()
-        reject(new Error('录音失败'))
-      }
-
+      const duration = Date.now() - this.startTime
       this.isRecording = false
-      this.mediaRecorder.stop()
+
+      // 合并所有 PCM 数据
+      const totalLength = this.pcmChunks.reduce((sum, c) => sum + c.length, 0)
+      const pcmData = new Float32Array(totalLength)
+      let offset = 0
+      for (const chunk of this.pcmChunks) {
+        pcmData.set(chunk, offset)
+        offset += chunk.length
+      }
+
+      this._cleanup()
+
+      // 编码为 WAV
+      const wavBlob = this._encodeWav(pcmData, this.sampleRate)
+      resolve({ blob: wavBlob, duration, format: 'wav' })
     })
   }
 
-  /**
-   * 取消录音
-   */
   cancel() {
     this.isRecording = false
-    this.chunks = []
-    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-      this.mediaRecorder.stop()
-    }
     this._cleanup()
   }
 
-  /**
-   * 清理资源
-   */
   _cleanup() {
+    if (this.processor) {
+      try { this.processor.disconnect() } catch (_) {}
+      this.processor = null
+    }
+    if (this.source) {
+      try { this.source.disconnect() } catch (_) {}
+      this.source = null
+    }
+    if (this.audioContext) {
+      try { this.audioContext.close() } catch (_) {}
+      this.audioContext = null
+    }
     if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop())
+      this.stream.getTracks().forEach(t => t.stop())
       this.stream = null
     }
-    this.mediaRecorder = null
-    this.chunks = []
+    this.pcmChunks = []
   }
 
-  /**
-   * 获取最佳 MIME 类型
-   */
-  _getBestMimeType() {
-    const types = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/ogg;codecs=opus',
-      'audio/mp4',
-    ]
-    for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) {
-        return type
-      }
+  _encodeWav(samples, sampleRate) {
+    const numChannels = 1
+    const bitsPerSample = 16
+    const byteRate = sampleRate * numChannels * (bitsPerSample / 8)
+    const blockAlign = numChannels * (bitsPerSample / 8)
+    const dataSize = samples.length * (bitsPerSample / 8)
+    const buffer = new ArrayBuffer(44 + dataSize)
+    const view = new DataView(buffer)
+
+    // RIFF header
+    this._writeStr(view, 0, 'RIFF')
+    view.setUint32(4, 36 + dataSize, true)
+    this._writeStr(view, 8, 'WAVE')
+
+    // fmt chunk
+    this._writeStr(view, 12, 'fmt ')
+    view.setUint32(16, 16, true)          // chunk size
+    view.setUint16(20, 1, true)           // PCM
+    view.setUint16(22, numChannels, true)
+    view.setUint32(24, sampleRate, true)
+    view.setUint32(28, byteRate, true)
+    view.setUint16(32, blockAlign, true)
+    view.setUint16(34, bitsPerSample, true)
+
+    // data chunk
+    this._writeStr(view, 36, 'data')
+    view.setUint32(40, dataSize, true)
+
+    // PCM samples (Float32 → Int16)
+    let pos = 44
+    for (let i = 0; i < samples.length; i++) {
+      let s = Math.max(-1, Math.min(1, samples[i]))
+      view.setInt16(pos, s < 0 ? s * 0x8000 : s * 0x7FFF, true)
+      pos += 2
     }
-    return '' // 让浏览器选择默认
+
+    return new Blob([buffer], { type: 'audio/wav' })
   }
 
-  /**
-   * 获取音频格式后缀
-   */
-  _getFormat() {
-    const mime = this.mediaRecorder?.mimeType || ''
-    if (mime.includes('webm')) return 'webm'
-    if (mime.includes('ogg')) return 'ogg'
-    if (mime.includes('mp4')) return 'mp4'
-    return 'webm'
+  _writeStr(view, offset, str) {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i))
+    }
   }
 
-  /**
-   * 销毁实例
-   */
   destroy() {
     this.cancel()
   }

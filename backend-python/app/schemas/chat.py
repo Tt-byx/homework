@@ -9,6 +9,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str = Field(..., description="AI reply")
     session_id: str | None = Field(None, description="Session ID")
+    audio: str | None = Field(None, description="base64 编码的 WAV 音频")
 
 
 class AudioChatRequest(BaseModel):
