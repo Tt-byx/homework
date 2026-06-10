@@ -1,4 +1,4 @@
-# ========================
+﻿# ========================
 # Java / Spring Boot
 # ========================
 *.class
@@ -71,8 +71,9 @@ chroma_db/
 # ========================
 # AI 模型缓存（体积大，不进仓库）
 # ========================
-models/
-*.bin
+# Ignore model cache but NOT frontend public assets
+/backend-python/models/
+/backend-python/*/models/
 *.pt
 *.pth
 *.onnx

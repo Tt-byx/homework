@@ -9,6 +9,7 @@ export const useChatStore = defineStore('chat', () => {
   const loading = ref(false)
   const isRecording = ref(false)
   const isWsConnected = ref(false)
+  const audioPlaying = ref(false)
 
   // 音频播放器
   const audioPlayer = new AudioPlayer()
@@ -22,7 +23,6 @@ export const useChatStore = defineStore('chat', () => {
   function initWebSocket() {
     chatWs.onConnect = () => {
       isWsConnected.value = true
-      // 初始化 AudioContext（在用户交互后）
       audioPlayer.init()
     }
 
@@ -31,7 +31,6 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     chatWs.onAsrResult = (text) => {
-      // ASR 识别结果：替换最后一条用户消息的内容（如果有占位）
       const lastUserMsg = [...messages.value].reverse().find(m => m.role === 'user')
       if (lastUserMsg && lastUserMsg.isVoice) {
         lastUserMsg.content = `🎤 ${text}`
@@ -39,9 +38,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     chatWs.onTextChunk = (text) => {
-      // 流式文字：追加到当前助手消息
       if (currentAssistantIndex === -1) {
-        // 创建新的助手消息
         currentAssistantIndex = messages.value.length
         messages.value.push({
           role: 'assistant',
@@ -53,7 +50,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     chatWs.onAudioChunk = (audioBase64, format) => {
-      // 音频片段：加入播放队列
+      audioPlaying.value = true
       audioPlayer.enqueue(audioBase64, format || 'wav')
     }
 
@@ -67,7 +64,6 @@ export const useChatStore = defineStore('chat', () => {
 
     chatWs.onError = (errMsg) => {
       loading.value = false
-      // 如果当前没有助手消息，创建一个错误消息
       if (currentAssistantIndex === -1) {
         messages.value.push({
           role: 'assistant',
@@ -84,9 +80,6 @@ export const useChatStore = defineStore('chat', () => {
     chatWs.connect()
   }
 
-  /**
-   * 发送文字消息
-   */
   function sendTextMessage(content) {
     if (!content.trim() || loading.value) return
 
@@ -103,13 +96,9 @@ export const useChatStore = defineStore('chat', () => {
     chatWs.sendText(content, sessionId.value)
   }
 
-  /**
-   * 发送语音消息
-   */
   function sendVoiceMessage(audioBlob, format) {
     if (!audioBlob || loading.value) return
 
-    // 先添加一条占位用户消息
     messages.value.push({
       role: 'user',
       content: '🎤 正在识别...',
@@ -123,22 +112,22 @@ export const useChatStore = defineStore('chat', () => {
     chatWs.sendAudio(audioBlob, format, sessionId.value)
   }
 
-  /**
-   * 清空消息
-   */
   function clearMessages() {
     messages.value = []
     sessionId.value = null
     currentAssistantIndex = -1
     audioPlayer.stop()
+    audioPlaying.value = false
   }
 
-  /**
-   * 销毁
-   */
   function destroy() {
     chatWs.disconnect()
     audioPlayer.destroy()
+  }
+
+  // AudioPlayer 回调 — 更新播放状态
+  audioPlayer.onPlayEnd = () => {
+    audioPlaying.value = false
   }
 
   return {
@@ -147,6 +136,8 @@ export const useChatStore = defineStore('chat', () => {
     loading,
     isRecording,
     isWsConnected,
+    audioPlaying,
+    audioPlayer,
     initWebSocket,
     sendTextMessage,
     sendVoiceMessage,
