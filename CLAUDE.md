@@ -2,8 +2,8 @@
 # 景区导览服务 AI 数字人 - 项目总控文档
 
 > 本文档随项目推进持续更新，是项目的唯一事实源。
-> 当前阶段：**Phase 2 - 语音交互链路**
-> 最后更新：2026-06-08
+> 当前阶段：**Phase 3 - 数字人形象与口型同步**
+> 最后更新：2026-06-10
 > This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository
 
 ## 行为准则
@@ -223,7 +223,7 @@
 
 > 完成后更新此处，并推进阶段标记。
 
-**当前：Phase 2 - 语音交互链路**
+**当前：Phase 3 - 数字人形象与口型同步**
 
 Phase 0 已完成：
 - [x] 搭建Git仓库，建立 main 分支
@@ -241,10 +241,19 @@ Phase 1 已完成：
 - [x] 建标准测试集（20问题），准确率 90%（18/20）
 - [x] 管理后台知识库管理页面（上传、列表、删除、重处理、状态轮询）
 
-Phase 2 待办：
-- [ ] Python端集成 FunASR（语音识别）
-- [ ] Python端集成 CosyVoice（语音合成）
-- [ ] 统一对话接口（音频/文字自动判断）
-- [ ] 流式输出（SSE或WebSocket）
-- [ ] 前端录音功能、语音播放、对话气泡UI
-- [ ] Java后端 WebSocket 管理实时对话会话
+Phase 2 已完成：
+- [x] ASR 语音识别（MiMo mimo-v2.5-asr API）
+- [x] TTS 语音合成（MiMo mimo-v2.5-tts API）
+- [x] 语音输入（录音 → WAV → ASR → 填入输入框）
+- [x] 语音输出（LLM 回答 → TTS → WebSocket → 前端播放）
+- [x] WebSocket 双向通信（前端 ↔ Java ↔ Python）
+- [x] 前端录音、音频播放、对话气泡UI
+
+Phase 3 待办：
+- [x] Live2D 数字人集成（Cubism SDK + white 角色模型）
+- [x] 口型同步（文字口型 + 音频口型 AnalyserNode）
+- [x] 表情系统（12种表情/姿势）
+- [x] ChatView 改版（左侧数字人 + 右侧聊天）
+- [ ] 数字人表情与 AI 回复情感联动
+- [ ] TTS 按句合成优化（减少首句播放延迟）
+- [ ] 口型同步效果调试

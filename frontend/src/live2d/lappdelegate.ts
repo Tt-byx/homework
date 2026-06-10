@@ -105,8 +105,6 @@ export class LAppDelegate {
     const view = (this._subdelegate as any)._view
     view?.onTouchesMoved(localX, localY)
   }
-    }
-  }
 
   public onTouchEnded(x: number, y: number): void {
     const canvas = this._canvas
