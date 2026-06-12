@@ -10,6 +10,7 @@ export const useChatStore = defineStore('chat', () => {
   const isRecording = ref(false)
   const isWsConnected = ref(false)
   const audioPlaying = ref(false)
+  const currentExpression = ref('Normal')
 
   // 音频播放器
   const audioPlayer = new AudioPlayer()
@@ -52,6 +53,10 @@ export const useChatStore = defineStore('chat', () => {
     chatWs.onAudioChunk = (audioBase64, format) => {
       audioPlaying.value = true
       audioPlayer.enqueue(audioBase64, format || 'wav')
+    }
+
+    chatWs.onExpression = (expression) => {
+      currentExpression.value = expression
     }
 
     chatWs.onDone = (data) => {
@@ -137,6 +142,7 @@ export const useChatStore = defineStore('chat', () => {
     isRecording,
     isWsConnected,
     audioPlaying,
+    currentExpression,
     audioPlayer,
     initWebSocket,
     sendTextMessage,

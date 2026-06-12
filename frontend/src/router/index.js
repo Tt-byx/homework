@@ -34,6 +34,11 @@ const routes = [
         name: 'AdminKnowledge',
         component: () => import('@/views/admin/KnowledgeView.vue'),
       },
+      {
+        path: 'conversations',
+        name: 'AdminConversations',
+        component: () => import('@/views/admin/ConversationsView.vue'),
+      },
     ],
   },
 ]

@@ -15,6 +15,14 @@ const breathFactor = ref(1)
 const eyeFactor = ref(1.5)
 const bodyFactor = ref(3)
 
+const interestTags = [
+  { icon: '🏛️', label: '历史文化', prompt: '我对历史文化感兴趣，请推荐一条游览路线', type: '' },
+  { icon: '🌿', label: '自然风光', prompt: '我喜欢自然风光，请推荐一条游览路线', type: 'success' },
+  { icon: '👨‍👩‍👧', label: '亲子互动', prompt: '我带小朋友来玩，推荐一条亲子路线', type: 'warning' },
+  { icon: '📸', label: '摄影打卡', prompt: '我想拍照打卡，推荐一条摄影路线', type: 'danger' },
+  { icon: '🍜', label: '美食禅意', prompt: '我想品尝美食和体验禅意文化，推荐一条路线', type: 'info' },
+]
+
 // 收集 AI 回复的完整文字，用于文字口型同步
 let fullReplyText = ''
 let textLipSyncStarted = false
@@ -23,12 +31,19 @@ function handleSendText(message) {
   chatStore.sendTextMessage(message)
 }
 
-// 当 AI 开始回复时切换微笑表情
+// 当 AI 开始回复时重置口型状态
 watch(() => chatStore.loading, (loading) => {
   if (loading) {
     live2dRef.value?.setExpression('Smile')
     fullReplyText = ''
     textLipSyncStarted = false
+  }
+})
+
+// 监听后端返回的表情，自动切换数字人表情
+watch(() => chatStore.currentExpression, (expr) => {
+  if (expr && live2dRef.value) {
+    live2dRef.value.setExpression(expr)
   }
 })
 
@@ -167,6 +182,23 @@ onUnmounted(() => {
         </div>
 
         <div class="chat-container">
+          <!-- 兴趣标签（仅在没有消息时显示） -->
+          <div v-if="chatStore.messages.length === 0" class="interest-tags">
+            <p class="tags-title">🎯 我感兴趣的方向</p>
+            <div class="tags-row">
+              <el-tag
+                v-for="tag in interestTags"
+                :key="tag.label"
+                :type="tag.type"
+                class="interest-tag"
+                effect="plain"
+                @click="handleSendText(tag.prompt)"
+              >
+                {{ tag.icon }} {{ tag.label }}
+              </el-tag>
+            </div>
+          </div>
+
           <MessageList :messages="chatStore.messages" :loading="chatStore.loading">
             <ChatMessage
               v-for="(msg, index) in chatStore.messages"
@@ -288,6 +320,38 @@ onUnmounted(() => {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
   overflow: hidden;
   min-height: 0;
+}
+
+/* 兴趣标签 */
+.interest-tags {
+  padding: 20px;
+  border-bottom: 1px solid #f0f0f0;
+  flex-shrink: 0;
+}
+
+.tags-title {
+  font-size: 14px;
+  color: #606266;
+  margin-bottom: 12px;
+}
+
+.tags-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.interest-tag {
+  cursor: pointer;
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  transition: all 0.2s;
+}
+
+.interest-tag:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 /* 响应式 */

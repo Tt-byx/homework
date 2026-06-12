@@ -16,5 +16,6 @@ public class ChatMessage {
     private Long conversationId;
     private String role;
     private String content;
+    private String sentiment;  // positive/neutral/negative
     private LocalDateTime createdAt;
 }

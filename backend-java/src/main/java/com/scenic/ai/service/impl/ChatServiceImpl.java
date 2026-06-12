@@ -8,6 +8,7 @@ import com.scenic.ai.entity.Conversation;
 import com.scenic.ai.mapper.ChatMessageMapper;
 import com.scenic.ai.mapper.ConversationMapper;
 import com.scenic.ai.service.ChatService;
+import com.scenic.ai.util.SentimentAnalyzer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -67,11 +68,12 @@ public class ChatServiceImpl implements ChatService {
             }
         }
 
-        // 2. 保存用户消息
+        // 2. 保存用户消息（含情感分析）
         ChatMessage userMsg = new ChatMessage();
         userMsg.setConversationId(conversationId);
         userMsg.setRole("user");
         userMsg.setContent(request.getMessage());
+        userMsg.setSentiment(SentimentAnalyzer.analyze(request.getMessage()));
         chatMessageMapper.insert(userMsg);
 
         // 3. 调用 Python 后端
@@ -87,11 +89,12 @@ public class ChatServiceImpl implements ChatService {
 
             String reply = (String) pythonResponse.get("reply");
 
-            // 4. 保存 AI 回复
+            // 4. 保存 AI 回复（含情感分析）
             ChatMessage aiMsg = new ChatMessage();
             aiMsg.setConversationId(conversationId);
             aiMsg.setRole("assistant");
             aiMsg.setContent(reply);
+            aiMsg.setSentiment(SentimentAnalyzer.analyze(reply));
             chatMessageMapper.insert(aiMsg);
 
             return new ChatResponse(reply, sessionId);

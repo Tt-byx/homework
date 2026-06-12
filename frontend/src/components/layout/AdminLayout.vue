@@ -9,6 +9,7 @@ const isCollapse = ref(false)
 const menuItems = [
   { path: '/admin/dashboard', icon: 'DataLine', label: '数据大屏' },
   { path: '/admin/knowledge', icon: 'Document', label: '知识库管理' },
+  { path: '/admin/conversations', icon: 'ChatDotRound', label: '对话记录' },
 ]
 </script>
 

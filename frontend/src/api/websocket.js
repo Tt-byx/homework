@@ -25,6 +25,7 @@ export class ChatWebSocket {
     this.onError = null
     this.onConnect = null
     this.onDisconnect = null
+    this.onExpression = null
   }
 
   /**
@@ -62,6 +63,9 @@ export class ChatWebSocket {
             break
           case 'error':
             this.onError?.(data.message)
+            break
+          case 'expression':
+            this.onExpression?.(data.expression)
             break
           default:
             console.warn('[WS] 未知消息类型:', data.type)

@@ -124,13 +124,24 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                     String reply = (String) result.get("reply");
                     String sessionId = (String) result.get("session_id");
                     String audio = (String) result.get("audio");
+                    String expr = (String) result.get("expression");
+
+                    // 发送表情（如果有）
+                    if (expr != null && !expr.isEmpty()) {
+                        sendToClient(session, WebSocketMessage.expression(expr));
+                    }
 
                     // 发送文字
                     sendToClient(session, WebSocketMessage.textChunk(reply));
 
-                    // 发送音频（如果有）
+                    // 发送音频（如果有，可能包含多个逗号分隔的 base64）
                     if (audio != null && !audio.isEmpty()) {
-                        sendToClient(session, WebSocketMessage.audioChunk(audio, "wav"));
+                        String[] audioParts = audio.split(",");
+                        for (String part : audioParts) {
+                            if (!part.isEmpty()) {
+                                sendToClient(session, WebSocketMessage.audioChunk(part.trim(), "wav"));
+                            }
+                        }
                     }
 
                     // 发送完成标记
@@ -235,6 +246,10 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                         case "error":
                             Map<String, Object> errData = objectMapper.readValue(data, Map.class);
                             sendToClient(session, WebSocketMessage.error((String) errData.get("message")));
+                            break;
+                        case "expression":
+                            Map<String, Object> exprData = objectMapper.readValue(data, Map.class);
+                            sendToClient(session, WebSocketMessage.expression((String) exprData.get("expression")));
                             break;
                     }
                 } catch (Exception e) {

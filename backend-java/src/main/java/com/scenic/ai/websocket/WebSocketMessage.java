@@ -27,6 +27,7 @@ public class WebSocketMessage {
     private String text;
     private String message;
     private String totalText;
+    private String expression;  // 数字人表情
 
     public WebSocketMessage() {}
 
@@ -68,6 +69,12 @@ public class WebSocketMessage {
         return msg;
     }
 
+    public static WebSocketMessage expression(String expression) {
+        WebSocketMessage msg = new WebSocketMessage("expression");
+        msg.setExpression(expression);
+        return msg;
+    }
+
     // --- Getters & Setters ---
 
     public String getType() { return type; }
@@ -93,4 +100,7 @@ public class WebSocketMessage {
 
     public String getTotalText() { return totalText; }
     public void setTotalText(String totalText) { this.totalText = totalText; }
+
+    public String getExpression() { return expression; }
+    public void setExpression(String expression) { this.expression = expression; }
 }

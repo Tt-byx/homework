@@ -2,8 +2,8 @@
 # 景区导览服务 AI 数字人 - 项目总控文档
 
 > 本文档随项目推进持续更新，是项目的唯一事实源。
-> 当前阶段：**Phase 3 - 数字人形象与口型同步**
-> 最后更新：2026-06-10
+> 当前阶段：**Phase 6 - 联调打磨与交付**
+> 最后更新：2026-06-11
 > This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository
 
 ## 行为准则
@@ -249,11 +249,30 @@ Phase 2 已完成：
 - [x] WebSocket 双向通信（前端 ↔ Java ↔ Python）
 - [x] 前端录音、音频播放、对话气泡UI
 
-Phase 3 待办：
+Phase 3 已完成：
 - [x] Live2D 数字人集成（Cubism SDK + white 角色模型）
 - [x] 口型同步（文字口型 + 音频口型 AnalyserNode）
 - [x] 表情系统（12种表情/姿势）
 - [x] ChatView 改版（左侧数字人 + 右侧聊天）
-- [ ] 数字人表情与 AI 回复情感联动
-- [ ] TTS 按句合成优化（减少首句播放延迟）
-- [ ] 口型同步效果调试
+- [x] 数字人表情与 AI 回复情感联动（关键词检测 → 表情切换）
+- [x] TTS 按句合成优化（减少首句播放延迟）
+
+Phase 4 待办：
+- [x] 设计兴趣标签体系，给景点打标签（5条主题路线模板）
+- [x] 预存推荐路线模板（导入 ChromaDB，共 223 chunks）
+- [x] 推荐逻辑：意图识别 → 路线检索 → 个性化推荐（RAG 自动处理）
+- [x] 游客端兴趣选择入口（5个快捷标签按钮）
+- [x] 优化推荐 Prompt（结构化路线格式）
+
+Phase 5 已完成：
+- [x] 对历史对话记录做情感分析（关键词检测 positive/neutral/negative）
+- [x] Java 聚合查询接口（DashboardMapper + DashboardService + DashboardController）
+- [x] 数据大屏页面（ECharts：概览卡片、趋势折线图、情感饼图、热门问题柱状图、最近对话表格）
+- [x] 管理后台对话记录页面（ConversationsView + 路由 + 侧边栏菜单）
+
+Phase 6 待办：
+- [x] 全链路代码审查和 bug 修复
+- [x] 项目文档整理
+- [ ] 录制演示视频（<=7分钟）
+- [ ] 撰写总体设计文档
+- [ ] 制作方案介绍 PPT

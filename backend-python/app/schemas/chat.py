@@ -10,6 +10,7 @@ class ChatResponse(BaseModel):
     reply: str = Field(..., description="AI reply")
     session_id: str | None = Field(None, description="Session ID")
     audio: str | None = Field(None, description="base64 编码的 WAV 音频")
+    expression: str = Field("Normal", description="数字人表情: Normal/Smile/Cry/Angry/Star")
 
 
 class AudioChatRequest(BaseModel):

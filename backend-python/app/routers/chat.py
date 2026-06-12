@@ -14,9 +14,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def detect_expression(text: str) -> str:
+    """基于关键词的简单情感检测，返回 Live2D 表情名"""
+    # 优先级从高到低
+    if any(w in text for w in ["抱歉", "无法", "不知道", "没有找到", "暂时无法", "错误", "失败"]):
+        return "Cry"
+    if any(w in text for w in ["恭喜", "太好了", "开心", "高兴", "快乐", "棒", "赞", "喜欢", "美丽", "精彩", "精彩", "😊", "😄"]):
+        return "Smile"
+    if any(w in text for w in ["注意", "小心", "警告", "禁止", "危险", "请勿", "不要"]):
+        return "Angry"
+    if any(w in text for w in ["？", "吗", "呢", "什么", "怎么", "为什么", "请问"]):
+        return "Star"
+    return "Normal"
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """文字聊天接口（RAG 增强 + TTS 语音合成）"""
+    """文字聊天接口（RAG + TTS 按句合成 + 情感检测）"""
     try:
         reply = await chat_with_rag(request.message)
     except Exception:
@@ -25,16 +39,48 @@ async def chat(request: ChatRequest):
         except Exception as e2:
             raise HTTPException(status_code=500, detail=f"AI服务调用失败: {str(e2)}")
 
-    # TTS 语音合成
-    audio_b64 = None
+    # 情感检测
+    expression = detect_expression(reply)
+
+    # TTS 按句合成（减少首句延迟）
+    audio_list = []
     try:
-        audio_bytes = await tts_service.synthesize(reply)
-        if audio_bytes:
-            audio_b64 = base64.b64encode(audio_bytes).decode()
+        sentences = _split_sentences(reply)
+        for sentence in sentences:
+            if sentence.strip():
+                try:
+                    audio_bytes = await tts_service.synthesize(sentence.strip())
+                    if audio_bytes:
+                        audio_list.append(base64.b64encode(audio_bytes).decode())
+                except Exception as e:
+                    logger.warning(f"句子 TTS 失败: {e}")
     except Exception as e:
         logger.warning(f"TTS 合成失败（不影响文字回复）: {e}")
 
-    return ChatResponse(reply=reply, session_id=request.session_id, audio=audio_b64)
+    # 将多个音频用逗号连接（前端逐个播放）
+    audio_str = ",".join(audio_list) if audio_list else None
+
+    return ChatResponse(
+        reply=reply,
+        session_id=request.session_id,
+        audio=audio_str,
+        expression=expression,
+    )
+
+
+def _split_sentences(text: str) -> list[str]:
+    """按中文标点分句"""
+    sentences = []
+    current = ""
+    for char in text:
+        current += char
+        if char in "。！？；\n":
+            if current.strip():
+                sentences.append(current.strip())
+            current = ""
+    if current.strip():
+        sentences.append(current.strip())
+    return sentences if sentences else [text]
 
 
 @router.post("/asr")
@@ -52,11 +98,10 @@ async def asr_endpoint(audio: UploadFile = File(...)):
 @router.post("/tts")
 async def tts_endpoint(
     text: str = Form(...),
-    speaker: str = Form("中文女")
 ):
     """TTS: 文字转语音"""
     try:
-        audio_bytes = await tts_service.synthesize(text, speaker)
+        audio_bytes = await tts_service.synthesize(text)
         return Response(
             content=audio_bytes,
             media_type="audio/wav",
@@ -72,7 +117,7 @@ async def chat_stream_endpoint(
     audio: UploadFile = File(None),
     session_id: str = Form(None),
 ):
-    """流式对话接口（支持文字和语音输入，流式输出文字+语音）"""
+    """流式对话接口（支持文字和语音输入，流式输出文字+语音+表情）"""
     async def event_generator():
         input_text = message
         full_text = ""
@@ -107,12 +152,19 @@ async def chat_stream_endpoint(
         # 流式生成回答 + 逐句合成语音
         sentence_buffer = ""
         end_marks = set("。！？；\n")
+        first_expression_sent = False
 
         try:
             async for text_chunk in chat_stream(input_text, context_chunks):
                 sentence_buffer += text_chunk
                 full_text += text_chunk
                 yield _sse_event("text_chunk", {"text": text_chunk})
+
+                # 首句完成时发送表情
+                if not first_expression_sent and sentence_buffer and sentence_buffer[-1] in end_marks:
+                    first_expression_sent = True
+                    expression = detect_expression(sentence_buffer)
+                    yield _sse_event("expression", {"expression": expression})
 
                 # 遇到句号等标点，合成这一句的语音
                 if sentence_buffer and sentence_buffer[-1] in end_marks:
@@ -136,6 +188,9 @@ async def chat_stream_endpoint(
 
         # 处理剩余未合成的文本
         if sentence_buffer.strip():
+            if not first_expression_sent:
+                expression = detect_expression(full_text)
+                yield _sse_event("expression", {"expression": expression})
             try:
                 audio_bytes = await tts_service.synthesize(sentence_buffer.strip())
                 if audio_bytes:
@@ -146,6 +201,10 @@ async def chat_stream_endpoint(
                     })
             except Exception as e:
                 logger.warning(f"TTS final failed: {e}")
+
+        # 如果没有任何句子完成（极短回复），发送默认表情
+        if not first_expression_sent:
+            yield _sse_event("expression", {"expression": detect_expression(full_text)})
 
         yield _sse_event("done", {
             "session_id": session_id,
