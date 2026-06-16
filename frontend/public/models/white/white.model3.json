@@ -43,6 +43,18 @@
 			{
 				"Name": "SideMouth",
 				"File": "expressions/SideMouth.exp3.json"
+			},
+			{
+				"Name": "PokeFace",
+				"File": "expressions/PokeFace.exp3.json"
+			},
+			{
+				"Name": "Mic",
+				"File": "expressions/Mic.exp3.json"
+			},
+			{
+				"Name": "Controller",
+				"File": "expressions/Controller.exp3.json"
 			}
 		],
 		"Motions": []

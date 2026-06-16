@@ -37,7 +37,7 @@ public class KnowledgeDocServiceImpl implements KnowledgeDocService {
     @Override
     public KnowledgeDoc upload(String title, MultipartFile file) {
         // 1. 保存文件到磁盘
-        String originalFilename = file.getOriginalFilename();
+        String originalFilename = fixFilenameEncoding(file.getOriginalFilename());
         String fileType = getFileExtension(originalFilename);
         String savedFileName = UUID.randomUUID() + "." + fileType;
         String filePath = uploadDir + "/" + savedFileName;
@@ -155,5 +155,21 @@ public class KnowledgeDocServiceImpl implements KnowledgeDocService {
             return "unknown";
         }
         return filename.substring(filename.lastIndexOf(".") + 1).toLowerCase();
+    }
+
+    /**
+     * 修复文件名中文乱码：ISO-8859-1 → UTF-8
+     */
+    private String fixFilenameEncoding(String filename) {
+        if (filename == null) return null;
+        try {
+            byte[] bytes = filename.getBytes("ISO-8859-1");
+            String decoded = new String(bytes, "UTF-8");
+            // 只有解码后包含中文字符才认为修复成功
+            if (decoded.matches(".*[\\u4e00-\\u9fa5].*")) {
+                return decoded;
+            }
+        } catch (Exception ignored) {}
+        return filename;
     }
 }

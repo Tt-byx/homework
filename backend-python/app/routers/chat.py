@@ -9,6 +9,7 @@ from app.services.llm_service import chat_with_rag, chat_with_mimo, chat_stream
 from app.services.asr_service import asr_service
 from app.services.tts_service import tts_service
 from app.services.rag_service import retrieve_context
+from app.utils.text_utils import strip_markdown
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -42,14 +43,16 @@ async def chat(request: ChatRequest):
     # 情感检测
     expression = detect_expression(reply)
 
-    # TTS 按句合成（减少首句延迟）
+    # TTS 按句合成（减少首句延迟），剥离 Markdown 符号便于朗读
+    # 只合成前3句，避免响应过大和延迟过高
     audio_list = []
     try:
         sentences = _split_sentences(reply)
-        for sentence in sentences:
-            if sentence.strip():
+        for sentence in sentences[:2]:  # 最多合成2句，平衡延迟和体验
+            clean_sentence = strip_markdown(sentence)
+            if clean_sentence.strip():
                 try:
-                    audio_bytes = await tts_service.synthesize(sentence.strip())
+                    audio_bytes = await tts_service.synthesize(clean_sentence.strip())
                     if audio_bytes:
                         audio_list.append(base64.b64encode(audio_bytes).decode())
                 except Exception as e:
@@ -166,9 +169,9 @@ async def chat_stream_endpoint(
                     expression = detect_expression(sentence_buffer)
                     yield _sse_event("expression", {"expression": expression})
 
-                # 遇到句号等标点，合成这一句的语音
+                # 遇到句号等标点，合成这一句的语音（剥离Markdown便于朗读）
                 if sentence_buffer and sentence_buffer[-1] in end_marks:
-                    sentence = sentence_buffer.strip()
+                    sentence = strip_markdown(sentence_buffer.strip())
                     if sentence:
                         try:
                             audio_bytes = await tts_service.synthesize(sentence)
@@ -192,13 +195,15 @@ async def chat_stream_endpoint(
                 expression = detect_expression(full_text)
                 yield _sse_event("expression", {"expression": expression})
             try:
-                audio_bytes = await tts_service.synthesize(sentence_buffer.strip())
-                if audio_bytes:
-                    audio_b64 = base64.b64encode(audio_bytes).decode()
-                    yield _sse_event("audio_chunk", {
-                        "audio": audio_b64,
-                        "format": "wav"
-                    })
+                clean_remaining = strip_markdown(sentence_buffer.strip())
+                if clean_remaining:
+                    audio_bytes = await tts_service.synthesize(clean_remaining)
+                    if audio_bytes:
+                        audio_b64 = base64.b64encode(audio_bytes).decode()
+                        yield _sse_event("audio_chunk", {
+                            "audio": audio_b64,
+                            "format": "wav"
+                        })
             except Exception as e:
                 logger.warning(f"TTS final failed: {e}")
 

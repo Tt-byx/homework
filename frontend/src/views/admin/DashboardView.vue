@@ -13,8 +13,15 @@ let sentimentChart = null
 let trendChart = null
 let questionsChart = null
 
-const sentimentColors = { positive: '#67c23a', neutral: '#909399', negative: '#f56c6c' }
+const sentimentColors = { positive: '#5a8a6a', neutral: '#a0aec0', negative: '#c0705a' }
 const sentimentLabels = { positive: '正面', neutral: '中性', negative: '负面' }
+
+const statCards = [
+  { key: 'todaySessions', label: '今日会话', icon: 'ChatLineRound', accent: 'sage' },
+  { key: 'todayMessages', label: '今日消息', icon: 'Comment', accent: 'warm' },
+  { key: 'totalSessions', label: '总会话数', icon: 'Tickets', accent: 'stone' },
+  { key: 'totalMessages', label: '总消息数', icon: 'Collection', accent: 'earth' },
+]
 
 async function fetchData() {
   try {
@@ -33,26 +40,27 @@ async function fetchData() {
 }
 
 function renderCharts() {
-  // 情感分布饼图
+  // Sentiment pie chart
   const sentEl = document.getElementById('sentiment-chart')
   if (sentEl) {
     if (!sentimentChart) sentimentChart = echarts.init(sentEl)
     sentimentChart.setOption({
       tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-      legend: { bottom: 0 },
+      legend: { bottom: 0, itemGap: 20, textStyle: { fontSize: 12, color: '#718096' } },
       series: [{
-        type: 'pie', radius: ['40%', '70%'],
-        label: { show: true, formatter: '{b}\n{d}%' },
+        type: 'pie', radius: ['45%', '72%'],
+        center: ['50%', '45%'],
+        label: { show: true, formatter: '{b}\n{d}%', fontSize: 11, color: '#4a5568' },
         data: sentimentData.value.map(d => ({
           name: sentimentLabels[d.sentiment] || d.sentiment,
           value: d.count,
-          itemStyle: { color: sentimentColors[d.sentiment] || '#409eff' },
+          itemStyle: { color: sentimentColors[d.sentiment] || '#a0aec0' },
         })),
       }],
     })
   }
 
-  // 趋势折线图
+  // Trend line chart
   const trendEl = document.getElementById('trend-chart')
   if (trendEl) {
     if (!trendChart) trendChart = echarts.init(trendEl)
@@ -61,17 +69,18 @@ function renderCharts() {
     const msgCounts = trendData.value.messages?.map(d => d.count) || []
     trendChart.setOption({
       tooltip: { trigger: 'axis' },
-      legend: { data: ['会话数', '消息数'], bottom: 0 },
-      xAxis: { type: 'category', data: dates },
-      yAxis: { type: 'value' },
+      legend: { data: ['会话数', '消息数'], bottom: 0, itemGap: 20, textStyle: { fontSize: 12, color: '#718096' } },
+      grid: { top: 20, right: 20, bottom: 40, left: 50 },
+      xAxis: { type: 'category', data: dates, axisLine: { lineStyle: { color: '#e2e8f0' } }, axisLabel: { color: '#718096', fontSize: 11 } },
+      yAxis: { type: 'value', splitLine: { lineStyle: { color: '#f0f0f0' } }, axisLabel: { color: '#718096', fontSize: 11 } },
       series: [
-        { name: '会话数', type: 'line', smooth: true, data: sessionCounts, itemStyle: { color: '#409eff' } },
-        { name: '消息数', type: 'line', smooth: true, data: msgCounts, itemStyle: { color: '#67c23a' } },
+        { name: '会话数', type: 'line', smooth: true, data: sessionCounts, symbol: 'circle', symbolSize: 6, itemStyle: { color: '#5a8a6a' }, lineStyle: { width: 2.5 }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(90,138,106,0.15)' }, { offset: 1, color: 'rgba(90,138,106,0.02)' }]) } },
+        { name: '消息数', type: 'line', smooth: true, data: msgCounts, symbol: 'circle', symbolSize: 6, itemStyle: { color: '#c4956a' }, lineStyle: { width: 2.5 }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(196,149,106,0.12)' }, { offset: 1, color: 'rgba(196,149,106,0.02)' }]) } },
       ],
     })
   }
 
-  // 热门问题柱状图
+  // Top questions bar chart
   const qEl = document.getElementById('questions-chart')
   if (qEl) {
     if (!questionsChart) questionsChart = echarts.init(qEl)
@@ -86,20 +95,24 @@ function renderCharts() {
           return `${q?.content || ''}<br/>提问次数: ${q?.count || 0}`
         },
       },
-      xAxis: { type: 'category', data: labels },
-      yAxis: { type: 'value' },
+      grid: { top: 16, right: 20, bottom: 40, left: 50 },
+      xAxis: { type: 'category', data: labels, axisLine: { lineStyle: { color: '#e2e8f0' } }, axisLabel: { color: '#718096', fontSize: 11 } },
+      yAxis: { type: 'value', splitLine: { lineStyle: { color: '#f0f0f0' } }, axisLabel: { color: '#718096', fontSize: 11 } },
       series: [{
-        type: 'bar', data: values, barWidth: '60%',
-        itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-          { offset: 0, color: '#667eea' }, { offset: 1, color: '#764ba2' },
-        ]) },
+        type: 'bar', data: values, barWidth: '50%', barMaxWidth: 36,
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: '#7ba88a' }, { offset: 1, color: '#5a8a6a' },
+          ]),
+          borderRadius: [4, 4, 0, 0],
+        },
       }],
     })
   }
 }
 
 function formatTime(time) {
-  if (!time) return '-'
+  if (!time) return '—'
   const d = new Date(time)
   const pad = (n) => String(n).padStart(2, '0')
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
@@ -118,33 +131,54 @@ onUnmounted(() => {
 
 <template>
   <div class="dashboard">
-    <h2>📊 数据大屏</h2>
-
-    <div class="overview-cards">
-      <div class="card"><div class="card-value">{{ overview.todaySessions }}</div><div class="card-label">今日会话</div></div>
-      <div class="card"><div class="card-value">{{ overview.todayMessages }}</div><div class="card-label">今日消息</div></div>
-      <div class="card"><div class="card-value">{{ overview.totalSessions }}</div><div class="card-label">总会话数</div></div>
-      <div class="card"><div class="card-value">{{ overview.totalMessages }}</div><div class="card-label">总消息数</div></div>
+    <!-- Stat cards -->
+    <div class="stat-grid">
+      <div
+        v-for="card in statCards"
+        :key="card.key"
+        class="stat-card"
+        :class="`stat-card--${card.accent}`"
+      >
+        <div class="stat-icon-wrap">
+          <el-icon :size="20"><component :is="card.icon" /></el-icon>
+        </div>
+        <div class="stat-body">
+          <span class="stat-value">{{ overview[card.key] }}</span>
+          <span class="stat-label">{{ card.label }}</span>
+        </div>
+      </div>
     </div>
 
-    <div class="charts-row">
-      <div class="chart-card"><h3>📈 近7天趋势</h3><div id="trend-chart" class="chart"></div></div>
-      <div class="chart-card"><h3>😊 情感分布</h3><div id="sentiment-chart" class="chart"></div></div>
+    <!-- Charts row -->
+    <div class="charts-grid">
+      <div class="panel">
+        <div class="panel-head">近 7 天趋势</div>
+        <div id="trend-chart" class="chart-area"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">情感分布</div>
+        <div id="sentiment-chart" class="chart-area"></div>
+      </div>
     </div>
 
-    <div class="charts-row single">
-      <div class="chart-card"><h3>🔥 热门问题 Top10</h3><div id="questions-chart" class="chart"></div></div>
+    <!-- Top questions -->
+    <div class="panel">
+      <div class="panel-head">热门问题 Top 10</div>
+      <div id="questions-chart" class="chart-area"></div>
     </div>
 
-    <div class="conversations-card">
-      <h3>💬 最近对话</h3>
-      <el-table :data="conversations" stripe>
+    <!-- Recent conversations -->
+    <div class="panel">
+      <div class="panel-head">最近对话</div>
+      <el-table :data="conversations" stripe class="data-table" size="default">
         <el-table-column prop="title" label="会话主题" min-width="150" show-overflow-tooltip />
         <el-table-column prop="first_user_message" label="首条消息" min-width="200" show-overflow-tooltip />
         <el-table-column prop="last_ai_reply" label="最新回复" min-width="200" show-overflow-tooltip />
         <el-table-column prop="message_count" label="消息数" width="80" align="center" />
         <el-table-column label="时间" width="150" align="center">
-          <template #default="{ row }">{{ formatTime(row.session_time) }}</template>
+          <template #default="{ row }">
+            <span class="time-cell">{{ formatTime(row.session_time) }}</span>
+          </template>
         </el-table-column>
       </el-table>
     </div>
@@ -152,22 +186,114 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.dashboard { padding: 20px; max-width: 1200px; margin: 0 auto; }
-.dashboard h2 { margin-bottom: 20px; font-size: 22px; color: #303133; }
+.dashboard {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
 
-.overview-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
-.card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; padding: 24px; text-align: center; color: #fff; box-shadow: 0 4px 12px rgba(102,126,234,0.3); }
-.card-value { font-size: 36px; font-weight: 700; margin-bottom: 8px; }
-.card-label { font-size: 14px; opacity: 0.9; }
+/* ── Stat cards ── */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
 
-.charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
-.charts-row.single { grid-template-columns: 1fr; }
-.chart-card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
-.chart-card h3 { font-size: 15px; color: #303133; margin-bottom: 16px; }
-.chart { width: 100%; height: 300px; }
+.stat-card {
+  background: var(--bg-card);
+  border-radius: 10px;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--border-light);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
 
-.conversations-card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
-.conversations-card h3 { font-size: 15px; color: #303133; margin-bottom: 16px; }
+.stat-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+  transform: translateY(-1px);
+}
 
-@media (max-width: 900px) { .overview-cards { grid-template-columns: repeat(2, 1fr); } .charts-row { grid-template-columns: 1fr; } }
+.stat-icon-wrap {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.stat-card--sage .stat-icon-wrap { background: #e8f0eb; color: #5a8a6a; }
+.stat-card--warm .stat-icon-wrap { background: #f5ede4; color: #c4956a; }
+.stat-card--stone .stat-icon-wrap { background: #eae8e4; color: #8a8578; }
+.stat-card--earth .stat-icon-wrap { background: #e4eae8; color: #6a858a; }
+
+.stat-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+
+/* ── Panels ── */
+.panel {
+  background: var(--bg-card);
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  padding: 20px;
+}
+
+.panel-head {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.chart-area {
+  width: 100%;
+  height: 280px;
+}
+
+/* ── Charts grid ── */
+.charts-grid {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 16px;
+}
+
+/* ── Data table ── */
+.data-table {
+  --el-table-border-color: var(--border-light);
+  --el-table-header-bg-color: var(--bg-page);
+}
+
+.time-cell {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .charts-grid { grid-template-columns: 1fr; }
+}
 </style>

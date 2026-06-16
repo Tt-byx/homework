@@ -10,7 +10,7 @@ public class SentimentAnalyzer {
     private static final Set<String> POSITIVE_WORDS = Set.of(
         "好的", "谢谢", "感谢", "太好了", "不错", "很好", "棒", "赞", "喜欢",
         "开心", "高兴", "满意", "精彩", "美丽", "漂亮", "方便", "有用",
-        "明白了", "知道了", "了解", "好的", "可以", "没问题"
+        "明白了", "知道了", "了解", "可以", "没问题"
     );
 
     private static final Set<String> NEGATIVE_WORDS = Set.of(

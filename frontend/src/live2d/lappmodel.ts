@@ -422,7 +422,7 @@ export class LAppModel extends CubismUserModel {
     if (!this._model) return -1
     const count = this._model.getPartCount()
     for (let i = 0; i < count; i++) {
-      if (this._model.getPartIds()[i] === partId) {
+      if (this._model.getPartId(i).getString() === partId) {
         this._partCache.set(partId, i)
         return i
       }
@@ -433,7 +433,7 @@ export class LAppModel extends CubismUserModel {
   private _setPartVisible(partId: string, visible: boolean): void {
     const idx = this._getPartIndex(partId)
     if (idx >= 0 && this._model) {
-      this._model.setPartOpacity(idx, visible ? 1.0 : 0.0)
+      this._model.setPartOpacityByIndex(idx, visible ? 1.0 : 0.0)
     }
   }
 

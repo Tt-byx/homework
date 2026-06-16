@@ -238,7 +238,7 @@ onUnmounted(() => {
   min-width: 320px;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(180deg, #e8f4f8 0%, #d4e9d7 40%, #f0ebe3 100%);
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
@@ -254,7 +254,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 4px;
   padding: 8px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.6);
   backdrop-filter: blur(10px);
 }
 
@@ -267,7 +267,7 @@ onUnmounted(() => {
 
 .group-label {
   font-size: 10px;
-  color: rgba(255,255,255,0.6);
+  color: #666;
   flex: 0 0 auto;
   margin-right: 2px;
 }
