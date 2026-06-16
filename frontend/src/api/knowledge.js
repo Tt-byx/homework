@@ -1,13 +1,18 @@
 import request from './request'
 
-export function uploadKnowledge(file, title) {
+export function uploadKnowledge(file, title, onUploadProgress) {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('title', title)
   return request.post('/api/knowledge/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120000,
+    onUploadProgress,
   })
+}
+
+export function processKnowledge(id) {
+  return request.post(`/api/knowledge/process/${id}`)
 }
 
 export function getKnowledgeList() {

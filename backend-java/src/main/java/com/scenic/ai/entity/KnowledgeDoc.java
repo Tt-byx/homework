@@ -20,6 +20,8 @@ public class KnowledgeDoc {
     private String content;
     private Integer chunkCount;
     private Integer vectorStatus;
+    private String processStage;    // parsing/chunking/embedding/storing/completed
+    private Integer processProgress; // 0-100
     private Integer status;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

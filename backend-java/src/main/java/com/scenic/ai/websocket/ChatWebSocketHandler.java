@@ -1,6 +1,7 @@
 package com.scenic.ai.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.scenic.ai.controller.AuthController;
 import com.scenic.ai.entity.ChatMessage;
 import com.scenic.ai.entity.Conversation;
 import com.scenic.ai.mapper.ChatMessageMapper;
@@ -51,7 +52,22 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         sessions.put(session.getId(), session);
-        log.info("WebSocket 连接建立: {}", session.getId());
+
+        // 解析 token 参数获取 userId
+        String query = session.getUri() != null ? session.getUri().getQuery() : null;
+        if (query != null) {
+            for (String param : query.split("&")) {
+                if (param.startsWith("token=")) {
+                    String token = param.substring(6);
+                    Long userId = AuthController.getUserIdFromToken(token);
+                    if (userId != null) {
+                        session.getAttributes().put("userId", userId);
+                    }
+                    break;
+                }
+            }
+        }
+        log.info("WebSocket 连接建立: {}, userId={}", session.getId(), session.getAttributes().get("userId"));
     }
 
     @Override
@@ -133,6 +149,11 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                     newConv.setSessionId(sessionId != null ? sessionId : java.util.UUID.randomUUID().toString());
                     String title = msg.getContent();
                     newConv.setTitle(title.substring(0, Math.min(20, title.length())));
+                    // 关联用户
+                    Object userIdObj = session.getAttributes().get("userId");
+                    if (userIdObj instanceof Long) {
+                        newConv.setUserId((Long) userIdObj);
+                    }
                     newConv.setStatus(1);
                     newConv.setCreatedAt(java.time.LocalDateTime.now());
                     newConv.setUpdatedAt(java.time.LocalDateTime.now());

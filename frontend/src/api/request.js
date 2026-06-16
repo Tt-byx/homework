@@ -5,9 +5,13 @@ const request = axios.create({
   timeout: 60000,
 })
 
-// 请求拦截器：预留 token 注入
+// 请求拦截器：注入 token
 request.interceptors.request.use(
   (config) => {
+    const token = localStorage.getItem('token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
     return config
   },
   (error) => Promise.reject(error)

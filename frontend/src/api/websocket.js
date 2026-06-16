@@ -6,7 +6,7 @@
  *   发送: {type: "text", content, session_id} | {type: "audio", format, session_id} + binary
  *   接收: {type: "text_chunk"|"audio_chunk"|"asr_result"|"done"|"error", ...}
  */
-const WS_URL = import.meta.env.VITE_WS_URL || `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/chat`
+const WS_BASE = import.meta.env.VITE_WS_URL || `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/chat`
 
 export class ChatWebSocket {
   constructor() {
@@ -29,14 +29,16 @@ export class ChatWebSocket {
   }
 
   /**
-   * 建立 WebSocket 连接
+   * 建立 WebSocket 连接（带 token）
    */
   connect() {
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return
     }
 
-    this.ws = new WebSocket(WS_URL)
+    const token = localStorage.getItem('token') || ''
+    const url = token ? `${WS_BASE}?token=${token}` : WS_BASE
+    this.ws = new WebSocket(url)
 
     this.ws.onopen = () => {
       console.log('[WS] 连接建立')

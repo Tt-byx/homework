@@ -101,7 +101,6 @@ export class LAppDelegate {
     const rect = canvas.getBoundingClientRect()
     const localX = x - rect.left
     const localY = y - rect.top
-    console.log('[Interact] onTouchMoved page:', x, y, 'local:', localX, localY, 'canvas:', canvas.width, 'x', canvas.height)
     const view = (this._subdelegate as any)._view
     view?.onTouchesMoved(localX, localY)
   }

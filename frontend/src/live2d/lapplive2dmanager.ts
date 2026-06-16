@@ -12,6 +12,7 @@ export class LAppLive2DManager {
   private _viewMatrix: CubismMatrix44 = new CubismMatrix44()
   private _models: LAppModel[] = []
   private _sceneIndex = 0
+  private _swayTime = 0
 
   constructor() {}
 
@@ -64,6 +65,15 @@ export class LAppLive2DManager {
     }
 
     model?.update()
+
+    // 微微抖动：正弦波缓慢位移
+    this._swayTime += 0.016
+    const swayX = Math.sin(this._swayTime * 0.5) * 0.003
+    const swayY = Math.cos(this._swayTime * 0.7) * 0.002
+    const arr = projection.getArray()
+    arr[4] += swayX
+    arr[5] += swayY
+
     model?.draw(projection)
 
     CubismWebGLOffscreenManager.getInstance().endFrameProcess(gl)

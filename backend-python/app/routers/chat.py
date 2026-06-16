@@ -43,12 +43,11 @@ async def chat(request: ChatRequest):
     # 情感检测
     expression = detect_expression(reply)
 
-    # TTS 按句合成（减少首句延迟），剥离 Markdown 符号便于朗读
-    # 只合成前3句，避免响应过大和延迟过高
+    # TTS 按句合成，剥离 Markdown 符号便于朗读
     audio_list = []
     try:
         sentences = _split_sentences(reply)
-        for sentence in sentences[:2]:  # 最多合成2句，平衡延迟和体验
+        for sentence in sentences:
             clean_sentence = strip_markdown(sentence)
             if clean_sentence.strip():
                 try:

@@ -1,0 +1,21 @@
+import request from './request'
+
+export function login(username, password) {
+  return request.post('/api/auth/login', { username, password })
+}
+
+export function register(username, password, nickname) {
+  return request.post('/api/auth/register', { username, password, nickname })
+}
+
+export function getMe() {
+  return request.get('/api/auth/me')
+}
+
+export function getConversations() {
+  return request.get('/api/conversations')
+}
+
+export function getConversationMessages(id) {
+  return request.get(`/api/conversations/${id}/messages`)
+}

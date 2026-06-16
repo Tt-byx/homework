@@ -101,7 +101,6 @@ export class LAppModel extends CubismUserModel {
   }
 
   public loadAssets(dir: string, fileName: string): void {
-    console.log('[LAppModel] loadAssets:', dir + fileName);
     this._modelHomeDir = dir
 
     fetch(`${this._modelHomeDir}${fileName}`)
@@ -116,7 +115,6 @@ export class LAppModel extends CubismUserModel {
   }
 
   private _loadModel(setting: ICubismModelSetting): void {
-    console.log('[LAppModel] _loadModel, moc:', setting.getModelFileName());
     this._updating = true
     this._initialized = false
 
@@ -134,7 +132,6 @@ export class LAppModel extends CubismUserModel {
         const gl = this._subdelegate.getGl()
         this.getRenderer().startUp(gl)
         this.setRenderTargetSize(canvas.width, canvas.height)
-        console.log('[LAppModel] ��Ⱦ���Ѵ������� GL, size:', canvas.width, 'x', canvas.height)
         this._state = LoadStep.LoadExpression
         this._loadExpressions(setting)
       })
@@ -294,7 +291,6 @@ export class LAppModel extends CubismUserModel {
       const mouthFormId = CubismFramework.getIdManager().getId('ParamMouthForm')
       if (mouthOpenId) this._lipSyncIds.push(mouthOpenId)
       if (mouthFormId) this._lipSyncIds.push(mouthFormId)
-      console.log('[LAppModel] LipSync: bound ParamMouthOpenY + ParamMouthForm')
     }
     this._updateScheduler.addUpdatableList(
       new CubismLipSyncUpdater(this._lipSyncIds, this._audioProvider)
@@ -336,9 +332,7 @@ export class LAppModel extends CubismUserModel {
         (textureInfo: TextureInfo) => {
           this.getRenderer().bindTexture(i, textureInfo.id)
           this._textureCount--
-          console.log('[LAppModel] texture loaded:', texFile, 'remaining:', this._textureCount - 1);
           if (this._textureCount <= 0) {
-            console.log('[LAppModel] ? ������Դ�������');
             this._state = LoadStep.CompleteSetup
             this._initialized = true
             this._updating = false

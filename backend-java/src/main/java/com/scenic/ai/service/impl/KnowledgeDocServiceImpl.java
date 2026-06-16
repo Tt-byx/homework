@@ -4,16 +4,21 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.scenic.ai.entity.KnowledgeDoc;
 import com.scenic.ai.mapper.KnowledgeDocMapper;
 import com.scenic.ai.service.KnowledgeDocService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -26,7 +31,10 @@ public class KnowledgeDocServiceImpl implements KnowledgeDocService {
     private KnowledgeDocMapper knowledgeDocMapper;
 
     @Autowired
-    private org.springframework.web.client.RestTemplate restTemplate;
+    private RestTemplate restTemplate;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Value("${scenic.upload.dir}")
     private String uploadDir;
@@ -36,6 +44,9 @@ public class KnowledgeDocServiceImpl implements KnowledgeDocService {
 
     @Override
     public KnowledgeDoc upload(String title, MultipartFile file) {
+        // 修复标题编码
+        title = fixFilenameEncoding(title);
+
         // 1. 保存文件到磁盘
         String originalFilename = fixFilenameEncoding(file.getOriginalFilename());
         String fileType = getFileExtension(originalFilename);
@@ -53,22 +64,123 @@ public class KnowledgeDocServiceImpl implements KnowledgeDocService {
             throw new RuntimeException("文件保存失败: " + e.getMessage(), e);
         }
 
-        // 2. 创建数据库记录
+        // 2. 创建数据库记录（vectorStatus=0 待处理）
         KnowledgeDoc doc = new KnowledgeDoc();
         doc.setTitle(title);
         doc.setFileName(originalFilename);
         doc.setFileUrl(filePath);
         doc.setFileType(fileType);
-        doc.setVectorStatus(1); // 处理中
+        doc.setVectorStatus(0); // 待处理
+        doc.setProcessProgress(0);
         doc.setStatus(1);
         doc.setCreatedAt(LocalDateTime.now());
         doc.setUpdatedAt(LocalDateTime.now());
         knowledgeDocMapper.insert(doc);
 
-        // 3. 异步调用 Python 处理
-        processDocumentAsync(doc.getId(), filePath, fileType, title);
-
         return doc;
+    }
+
+    @Override
+    @Async
+    public void process(Long id) {
+        KnowledgeDoc doc = knowledgeDocMapper.selectById(id);
+        if (doc == null) {
+            throw new RuntimeException("文档不存在: " + id);
+        }
+
+        // 更新状态为处理中
+        doc.setVectorStatus(1);
+        doc.setProcessStage("parsing");
+        doc.setProcessProgress(0);
+        doc.setUpdatedAt(LocalDateTime.now());
+        knowledgeDocMapper.updateById(doc);
+
+        log.info("开始处理文档: id={}, file={}", id, doc.getFileUrl());
+
+        try {
+            // 调用 Python 处理接口（SSE 流式返回进度）
+            URL url = new URL(pythonBackendUrl + "/api/knowledge/process");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(300000); // 5分钟
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+
+            // 发送 JSON 请求体
+            Map<String, Object> request = new HashMap<>();
+            request.put("doc_id", doc.getId());
+            request.put("file_path", doc.getFileUrl());
+            request.put("file_type", doc.getFileType());
+            request.put("doc_title", doc.getTitle());
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(objectMapper.writeValueAsBytes(request));
+                os.flush();
+            }
+
+            // 读取 SSE 流式响应
+            int chunkCount = 0;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                String currentEvent = "";
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.startsWith("event: ")) {
+                        currentEvent = line.substring(7).trim();
+                    } else if (line.startsWith("data: ")) {
+                        String data = line.substring(6).trim();
+                        try {
+                            Map<String, Object> eventData = objectMapper.readValue(data, Map.class);
+
+                            if ("progress".equals(currentEvent)) {
+                                // 更新进度
+                                String stage = (String) eventData.get("stage");
+                                Number progress = (Number) eventData.get("progress");
+                                doc = knowledgeDocMapper.selectById(id);
+                                if (doc != null) {
+                                    doc.setProcessStage(stage);
+                                    doc.setProcessProgress(progress.intValue());
+                                    doc.setUpdatedAt(LocalDateTime.now());
+                                    knowledgeDocMapper.updateById(doc);
+                                }
+                                log.debug("文档处理进度: id={}, stage={}, progress={}%", id, stage, progress);
+                            } else if ("done".equals(currentEvent)) {
+                                Number cc = (Number) eventData.get("chunk_count");
+                                chunkCount = cc != null ? cc.intValue() : 0;
+                            } else if ("error".equals(currentEvent)) {
+                                throw new RuntimeException((String) eventData.get("message"));
+                            }
+                        } catch (Exception e) {
+                            if ("SSE解析".equals(e.getMessage())) continue;
+                            throw e;
+                        }
+                    }
+                }
+            }
+
+            // 处理完成
+            doc = knowledgeDocMapper.selectById(id);
+            if (doc != null) {
+                doc.setVectorStatus(2); // 完成
+                doc.setProcessStage("completed");
+                doc.setProcessProgress(100);
+                doc.setChunkCount(chunkCount);
+                doc.setUpdatedAt(LocalDateTime.now());
+                knowledgeDocMapper.updateById(doc);
+            }
+            log.info("文档处理完成: id={}, chunkCount={}", id, chunkCount);
+
+        } catch (Exception e) {
+            log.error("文档处理失败: id={}, error={}", id, e.getMessage());
+            doc = knowledgeDocMapper.selectById(id);
+            if (doc != null) {
+                doc.setVectorStatus(3); // 失败
+                doc.setProcessStage("failed");
+                doc.setUpdatedAt(LocalDateTime.now());
+                knowledgeDocMapper.updateById(doc);
+            }
+        }
     }
 
     @Override
@@ -87,12 +199,10 @@ public class KnowledgeDocServiceImpl implements KnowledgeDocService {
             throw new RuntimeException("文档不存在: " + id);
         }
 
-        // 软删除
         doc.setStatus(0);
         doc.setUpdatedAt(LocalDateTime.now());
         knowledgeDocMapper.updateById(doc);
 
-        // 删除向量
         try {
             restTemplate.delete(pythonBackendUrl + "/api/knowledge/" + id);
         } catch (Exception e) {
@@ -107,47 +217,13 @@ public class KnowledgeDocServiceImpl implements KnowledgeDocService {
             throw new RuntimeException("文档不存在: " + id);
         }
 
-        doc.setVectorStatus(1); // 处理中
+        doc.setVectorStatus(1);
+        doc.setProcessStage("parsing");
+        doc.setProcessProgress(0);
         doc.setUpdatedAt(LocalDateTime.now());
         knowledgeDocMapper.updateById(doc);
 
-        processDocumentAsync(doc.getId(), doc.getFileUrl(), doc.getFileType(), doc.getTitle());
-    }
-
-    @Async
-    public void processDocumentAsync(Long docId, String filePath, String fileType, String docTitle) {
-        log.info("开始异步处理文档: id={}, path={}", docId, filePath);
-        try {
-            Map<String, Object> request = new HashMap<>();
-            request.put("doc_id", docId);
-            request.put("file_path", filePath);
-            request.put("file_type", fileType);
-            request.put("doc_title", docTitle);
-
-            @SuppressWarnings("unchecked")
-            Map<String, Object> response = restTemplate.postForObject(
-                    pythonBackendUrl + "/api/knowledge/process",
-                    request, Map.class
-            );
-
-            int chunkCount = ((Number) response.get("chunk_count")).intValue();
-            KnowledgeDoc doc = knowledgeDocMapper.selectById(docId);
-            if (doc != null) {
-                doc.setVectorStatus(2); // 完成
-                doc.setChunkCount(chunkCount);
-                doc.setUpdatedAt(LocalDateTime.now());
-                knowledgeDocMapper.updateById(doc);
-            }
-            log.info("文档处理完成: id={}, chunkCount={}", docId, chunkCount);
-        } catch (Exception e) {
-            log.error("文档处理失败: id={}, error={}", docId, e.getMessage());
-            KnowledgeDoc doc = knowledgeDocMapper.selectById(docId);
-            if (doc != null) {
-                doc.setVectorStatus(3); // 失败
-                doc.setUpdatedAt(LocalDateTime.now());
-                knowledgeDocMapper.updateById(doc);
-            }
-        }
+        process(id);
     }
 
     private String getFileExtension(String filename) {
@@ -157,15 +233,11 @@ public class KnowledgeDocServiceImpl implements KnowledgeDocService {
         return filename.substring(filename.lastIndexOf(".") + 1).toLowerCase();
     }
 
-    /**
-     * 修复文件名中文乱码：ISO-8859-1 → UTF-8
-     */
     private String fixFilenameEncoding(String filename) {
         if (filename == null) return null;
         try {
             byte[] bytes = filename.getBytes("ISO-8859-1");
             String decoded = new String(bytes, "UTF-8");
-            // 只有解码后包含中文字符才认为修复成功
             if (decoded.matches(".*[\\u4e00-\\u9fa5].*")) {
                 return decoded;
             }

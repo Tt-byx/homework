@@ -9,6 +9,8 @@ public interface KnowledgeDocService {
 
     KnowledgeDoc upload(String title, MultipartFile file);
 
+    void process(Long id);
+
     List<KnowledgeDoc> listAll();
 
     void delete(Long id);

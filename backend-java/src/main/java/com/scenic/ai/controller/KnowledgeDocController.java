@@ -35,6 +35,12 @@ public class KnowledgeDocController {
         return Result.success(null);
     }
 
+    @PostMapping("/process/{id}")
+    public Result<Void> process(@PathVariable Long id) {
+        knowledgeDocService.process(id);
+        return Result.success(null);
+    }
+
     @PostMapping("/reprocess/{id}")
     public Result<Void> reprocess(@PathVariable Long id) {
         knowledgeDocService.reprocess(id);

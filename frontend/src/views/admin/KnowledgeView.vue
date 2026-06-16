@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import {
   uploadKnowledge,
+  processKnowledge,
   getKnowledgeList,
   deleteKnowledge,
   reprocessKnowledge,
@@ -11,14 +12,17 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 const documents = ref([])
 const uploadTitle = ref('')
 const uploading = ref(false)
+const uploadProgress = ref(0)
 const selectedFile = ref(null)
 let pollTimer = null
 
-const statusConfig = {
-  0: { label: '未处理', type: 'info' },
-  1: { label: '处理中', type: 'warning' },
-  2: { label: '已完成', type: 'success' },
-  3: { label: '失败', type: 'danger' },
+const stageLabels = {
+  parsing: '解析文档',
+  chunking: '切分文本',
+  embedding: '向量化',
+  storing: '存入数据库',
+  completed: '处理完成',
+  failed: '处理失败',
 }
 
 const fileTypeStyle = {
@@ -53,16 +57,31 @@ async function handleUpload() {
   }
 
   uploading.value = true
+  uploadProgress.value = 0
   try {
-    await uploadKnowledge(selectedFile.value, uploadTitle.value.trim())
-    ElMessage.success('上传成功，正在处理中...')
+    await uploadKnowledge(selectedFile.value, uploadTitle.value.trim(), (e) => {
+      if (e.total) uploadProgress.value = Math.round((e.loaded / e.total) * 100)
+    })
+    ElMessage.success('上传成功！')
     uploadTitle.value = ''
     selectedFile.value = null
+    uploadProgress.value = 0
     await fetchList()
   } catch (err) {
     ElMessage.error('上传失败: ' + (err.message || '未知错误'))
   } finally {
     uploading.value = false
+  }
+}
+
+async function handleProcess(doc) {
+  try {
+    await processKnowledge(doc.id)
+    ElMessage.info('开始处理文档...')
+    await fetchList()
+    startPolling()
+  } catch (err) {
+    ElMessage.error('启动处理失败: ' + (err.message || '未知错误'))
   }
 }
 
@@ -78,7 +97,7 @@ async function fetchList() {
 async function handleDelete(doc) {
   try {
     await ElMessageBox.confirm(
-      `确定删除文档「${doc.title}」？删除后相关向量数据也将被清除。`,
+      `确定删除文档「${doc.title}」？`,
       '确认删除',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
@@ -86,9 +105,7 @@ async function handleDelete(doc) {
     ElMessage.success('已删除')
     await fetchList()
   } catch (err) {
-    if (err !== 'cancel') {
-      ElMessage.error('删除失败: ' + (err.message || '未知错误'))
-    }
+    if (err !== 'cancel') ElMessage.error('删除失败')
   }
 }
 
@@ -97,8 +114,9 @@ async function handleReprocess(doc) {
     await reprocessKnowledge(doc.id)
     ElMessage.info('重新处理中...')
     await fetchList()
+    startPolling()
   } catch (err) {
-    ElMessage.error('重处理失败: ' + (err.message || '未知错误'))
+    ElMessage.error('重处理失败')
   }
 }
 
@@ -109,28 +127,44 @@ function formatTime(time) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-function startPolling() {
-  pollTimer = setInterval(() => {
-    if (isProcessing.value) fetchList()
-  }, 3000)
+function getProgressStatus(row) {
+  if (row.vectorStatus === 0) return '待处理'
+  if (row.vectorStatus === 1) return stageLabels[row.processStage] || '处理中'
+  if (row.vectorStatus === 2) return `已完成 (${row.chunkCount || 0} 片段)`
+  if (row.vectorStatus === 3) return '处理失败'
+  return '未知'
 }
 
-onMounted(() => {
-  fetchList()
-  startPolling()
-})
+function startPolling() {
+  if (pollTimer) return
+  pollTimer = setInterval(() => {
+    if (isProcessing.value) {
+      fetchList()
+    } else {
+      stopPolling()
+    }
+  }, 1000)
+}
 
-onUnmounted(() => {
+function stopPolling() {
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
   }
+}
+
+onMounted(() => {
+  fetchList()
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 </script>
 
 <template>
   <div class="page">
-    <!-- Upload panel -->
+    <!-- Step 1: Upload -->
     <div class="panel">
       <div class="panel-head">
         <el-icon :size="16"><Upload /></el-icon>
@@ -158,6 +192,18 @@ onUnmounted(() => {
             <div class="upload-hint">支持 .docx、.xlsx 格式</div>
           </div>
         </el-upload>
+
+        <!-- Upload progress -->
+        <div v-if="uploading" class="upload-progress">
+          <el-progress
+            :percentage="uploadProgress"
+            :stroke-width="8"
+            :format="(p) => p + '%'"
+            color="#5a8a6a"
+          />
+          <span class="progress-hint">正在上传文件...</span>
+        </div>
+
         <div class="upload-actions">
           <el-button
             type="primary"
@@ -166,13 +212,13 @@ onUnmounted(() => {
             @click="handleUpload"
           >
             <el-icon v-if="!uploading"><Check /></el-icon>
-            {{ uploading ? '上传中...' : '上传并处理' }}
+            {{ uploading ? '上传中...' : '上传文件' }}
           </el-button>
         </div>
       </div>
     </div>
 
-    <!-- Document list panel -->
+    <!-- Step 2: Document list with process button -->
     <div class="panel">
       <div class="panel-head">
         <el-icon :size="16"><FolderOpened /></el-icon>
@@ -187,7 +233,7 @@ onUnmounted(() => {
         stripe
         size="default"
       >
-        <el-table-column prop="title" label="文档标题" min-width="180">
+        <el-table-column prop="title" label="文档标题" min-width="160">
           <template #default="{ row }">
             <div class="doc-name">
               <el-icon :size="14" :style="{ color: (fileTypeStyle[row.fileType] || fileTypeStyle.docx).color }">
@@ -198,9 +244,7 @@ onUnmounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column prop="fileName" label="文件名" min-width="160" show-overflow-tooltip />
-
-        <el-table-column prop="fileType" label="类型" width="90" align="center">
+        <el-table-column prop="fileType" label="类型" width="80" align="center">
           <template #default="{ row }">
             <span
               class="type-chip"
@@ -214,35 +258,59 @@ onUnmounted(() => {
           </template>
         </el-table-column>
 
-        <el-table-column prop="chunkCount" label="切片数" width="90" align="center">
+        <el-table-column label="处理进度" min-width="240">
           <template #default="{ row }">
-            <span class="mono-num">{{ row.chunkCount ?? '—' }}</span>
+            <!-- Processing: show progress bar -->
+            <div v-if="row.vectorStatus === 1" class="progress-cell">
+              <el-progress
+                :percentage="row.processProgress || 0"
+                :stroke-width="10"
+                :format="() => ''"
+                color="#5a8a6a"
+                class="inline-progress"
+              />
+              <span class="progress-text">
+                {{ stageLabels[row.processStage] || '处理中' }}
+                {{ row.processProgress || 0 }}%
+              </span>
+            </div>
+            <!-- Completed -->
+            <div v-else-if="row.vectorStatus === 2" class="status-done">
+              <el-icon color="#5a8a6a"><CircleCheckFilled /></el-icon>
+              <span>已完成 ({{ row.chunkCount || 0 }} 片段)</span>
+            </div>
+            <!-- Failed -->
+            <div v-else-if="row.vectorStatus === 3" class="status-fail">
+              <el-icon color="#e05050"><CircleCloseFilled /></el-icon>
+              <span>处理失败</span>
+            </div>
+            <!-- Pending -->
+            <div v-else class="status-pending">
+              <el-icon color="#999"><Clock /></el-icon>
+              <span>待处理</span>
+            </div>
           </template>
         </el-table-column>
 
-        <el-table-column prop="vectorStatus" label="向量化状态" width="120" align="center">
-          <template #default="{ row }">
-            <el-tag
-              :type="statusConfig[row.vectorStatus]?.type || 'info'"
-              size="small"
-              effect="light"
-              round
-              :class="{ 'tag-pulse': row.vectorStatus === 1 }"
-            >
-              <el-icon v-if="row.vectorStatus === 1" class="spin-icon"><Loading /></el-icon>
-              {{ statusConfig[row.vectorStatus]?.label || '未知' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="createdAt" label="上传时间" width="160" align="center">
+        <el-table-column prop="createdAt" label="上传时间" width="150" align="center">
           <template #default="{ row }">
             <span class="time-cell">{{ formatTime(row.createdAt) }}</span>
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="120" align="center" fixed="right">
+        <el-table-column label="操作" width="160" align="center" fixed="right">
           <template #default="{ row }">
+            <!-- Process button (pending) -->
+            <el-button
+              v-if="row.vectorStatus === 0"
+              type="success"
+              size="small"
+              text
+              @click="handleProcess(row)"
+            >
+              <el-icon><VideoPlay /></el-icon> 开始处理
+            </el-button>
+            <!-- Retry button (failed) -->
             <el-button
               v-if="row.vectorStatus === 3"
               type="warning"
@@ -252,6 +320,7 @@ onUnmounted(() => {
             >
               <el-icon><RefreshRight /></el-icon> 重试
             </el-button>
+            <!-- Delete button -->
             <el-button
               type="danger"
               size="small"
@@ -284,7 +353,6 @@ onUnmounted(() => {
   gap: 20px;
 }
 
-/* ── Panel ── */
 .panel {
   background: var(--bg-card);
   border-radius: 10px;
@@ -324,11 +392,6 @@ onUnmounted(() => {
 .title-input :deep(.el-input__wrapper) {
   border-radius: 8px;
   box-shadow: 0 0 0 1px var(--border-medium) inset;
-  transition: box-shadow 0.2s;
-}
-
-.title-input :deep(.el-input__wrapper:focus-within) {
-  box-shadow: 0 0 0 2px var(--accent-sage) inset;
 }
 
 .upload-area :deep(.el-upload-dragger) {
@@ -354,11 +417,6 @@ onUnmounted(() => {
 .upload-icon {
   font-size: 36px;
   color: var(--text-tertiary);
-  transition: color 0.2s;
-}
-
-.upload-area :deep(.el-upload-dragger:hover) .upload-icon {
-  color: var(--accent-sage);
 }
 
 .upload-text {
@@ -377,6 +435,21 @@ onUnmounted(() => {
   color: var(--text-tertiary);
 }
 
+.upload-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.upload-progress :deep(.el-progress) {
+  width: 100%;
+}
+
+.progress-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
 .upload-actions {
   display: flex;
   justify-content: flex-end;
@@ -388,11 +461,6 @@ onUnmounted(() => {
   border-color: var(--accent-sage);
   padding: 10px 24px;
   font-weight: 500;
-}
-
-.submit-btn:hover {
-  background: #4d7a5c;
-  border-color: #4d7a5c;
 }
 
 /* ── Table ── */
@@ -418,36 +486,50 @@ onUnmounted(() => {
   letter-spacing: 0.5px;
 }
 
-.mono-num {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
 .time-cell {
   font-size: 13px;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
-.spin-icon {
-  animation: spin 1s linear infinite;
-  margin-right: 4px;
+/* ── Progress cell ── */
+.progress-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.inline-progress {
+  width: 100%;
 }
 
-.tag-pulse {
-  animation: pulse 2s ease-in-out infinite;
+.inline-progress :deep(.el-progress-bar__outer) {
+  border-radius: 4px;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
+.inline-progress :deep(.el-progress-bar__inner) {
+  border-radius: 4px;
 }
+
+.progress-text {
+  font-size: 12px;
+  color: var(--accent-sage);
+  font-weight: 500;
+}
+
+/* ── Status cells ── */
+.status-done,
+.status-fail,
+.status-pending {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.status-done span { color: #5a8a6a; }
+.status-fail span { color: #e05050; }
+.status-pending span { color: #999; }
 
 /* ── Empty ── */
 .empty {
