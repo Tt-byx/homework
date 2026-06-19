@@ -9,18 +9,27 @@ from app.services.llm_service import chat_with_rag, chat_with_mimo, chat_stream
 from app.services.asr_service import asr_service
 from app.services.tts_service import tts_service
 from app.services.rag_service import retrieve_context
+from app.services.sentiment_service import analyze_sentiment
 from app.utils.text_utils import strip_markdown
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def detect_expression(text: str) -> str:
-    """基于关键词的简单情感检测，返回 Live2D 表情名"""
-    # 优先级从高到低
+async def detect_expression(text: str) -> str:
+    """使用 LLM 情感分析检测表情，失败时降级到关键词"""
+    try:
+        result = await analyze_sentiment(text)
+        return result.get("expression", "Normal")
+    except Exception:
+        return _keyword_fallback_expression(text)
+
+
+def _keyword_fallback_expression(text: str) -> str:
+    """关键词降级表情检测"""
     if any(w in text for w in ["抱歉", "无法", "不知道", "没有找到", "暂时无法", "错误", "失败"]):
         return "Cry"
-    if any(w in text for w in ["恭喜", "太好了", "开心", "高兴", "快乐", "棒", "赞", "喜欢", "美丽", "精彩", "精彩", "😊", "😄"]):
+    if any(w in text for w in ["恭喜", "太好了", "开心", "高兴", "快乐", "棒", "赞", "喜欢", "美丽", "精彩"]):
         return "Smile"
     if any(w in text for w in ["注意", "小心", "警告", "禁止", "危险", "请勿", "不要"]):
         return "Angry"
@@ -41,7 +50,7 @@ async def chat(request: ChatRequest):
             raise HTTPException(status_code=500, detail=f"AI服务调用失败: {str(e2)}")
 
     # 情感检测
-    expression = detect_expression(reply)
+    expression = await detect_expression(reply)
 
     # TTS 按句合成，剥离 Markdown 符号便于朗读
     audio_list = []
@@ -165,7 +174,7 @@ async def chat_stream_endpoint(
                 # 首句完成时发送表情
                 if not first_expression_sent and sentence_buffer and sentence_buffer[-1] in end_marks:
                     first_expression_sent = True
-                    expression = detect_expression(sentence_buffer)
+                    expression = await detect_expression(sentence_buffer)
                     yield _sse_event("expression", {"expression": expression})
 
                 # 遇到句号等标点，合成这一句的语音（剥离Markdown便于朗读）
@@ -191,7 +200,7 @@ async def chat_stream_endpoint(
         # 处理剩余未合成的文本
         if sentence_buffer.strip():
             if not first_expression_sent:
-                expression = detect_expression(full_text)
+                expression = await detect_expression(full_text)
                 yield _sse_event("expression", {"expression": expression})
             try:
                 clean_remaining = strip_markdown(sentence_buffer.strip())
@@ -208,7 +217,7 @@ async def chat_stream_endpoint(
 
         # 如果没有任何句子完成（极短回复），发送默认表情
         if not first_expression_sent:
-            yield _sse_event("expression", {"expression": detect_expression(full_text)})
+            yield _sse_event("expression", {"expression": await detect_expression(full_text)})
 
         yield _sse_event("done", {
             "session_id": session_id,

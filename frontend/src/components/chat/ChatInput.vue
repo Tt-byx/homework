@@ -1,8 +1,10 @@
 <script setup>
 import { ref, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { VoiceRecorder } from './VoiceRecorder.js'
 import { recognizeSpeech } from '@/api/chat'
 
+const router = useRouter()
 const emit = defineEmits(['sendText'])
 
 const props = defineProps({
@@ -145,6 +147,17 @@ onUnmounted(() => {
         <span v-if="isRecognizing">识别中...</span>
         <span v-else-if="isRecording">停止录音</span>
         <span v-else>语音输入</span>
+      </el-button>
+
+      <el-button
+        type="info"
+        plain
+        :disabled="loading || isRecording"
+        @click="router.push('/call')"
+        class="call-mode-btn"
+      >
+        <el-icon><Phone /></el-icon>
+        通话模式
       </el-button>
     </div>
 
