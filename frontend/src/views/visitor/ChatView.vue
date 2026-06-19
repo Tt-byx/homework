@@ -27,9 +27,24 @@ const interestTags = [
   { icon: '🍜', label: '美食禅意', prompt: '我想品尝美食和体验禅意文化，推荐一条路线', type: 'info' },
 ]
 
+const durationOptions = [
+  { label: '2小时', value: '2小时' },
+  { label: '半天', value: '半天' },
+  { label: '全天', value: '全天' },
+]
+const selectedDuration = ref('')
+
 // ── 发送消息 ──
 function handleSendText(message) {
   chatStore.sendTextMessage(message)
+}
+
+function sendInterestTag(tag) {
+  let prompt = tag.prompt
+  if (selectedDuration.value) {
+    prompt += `，我可用时间为${selectedDuration.value}`
+  }
+  handleSendText(prompt)
 }
 
 // ── 对话列表管理 ──
@@ -174,9 +189,20 @@ onUnmounted(() => {
             <p class="tags-title">🎯 我感兴趣的方向</p>
             <div class="tags-row">
               <el-tag v-for="tag in interestTags" :key="tag.label" :type="tag.type"
-                class="interest-tag" effect="plain" @click="handleSendText(tag.prompt)">
+                class="interest-tag" effect="plain" @click="sendInterestTag(tag)">
                 {{ tag.icon }} {{ tag.label }}
               </el-tag>
+            </div>
+            <div class="duration-row">
+              <span class="duration-label">⏱ 可用时间：</span>
+              <el-radio-group v-model="selectedDuration" size="small">
+                <el-radio-button
+                  v-for="d in durationOptions"
+                  :key="d.value"
+                  :label="d.value"
+                >{{ d.label }}</el-radio-button>
+              </el-radio-group>
+              <el-button v-if="selectedDuration" text size="small" @click="selectedDuration = ''">清除</el-button>
             </div>
           </div>
 
@@ -234,6 +260,8 @@ onUnmounted(() => {
 .interest-tags { padding: 20px; border-bottom: 1px solid #f0f0f0; flex-shrink: 0; }
 .tags-title { font-size: 14px; color: #606266; margin-bottom: 12px; }
 .tags-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.duration-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #f0f0f0; }
+.duration-label { font-size: 13px; color: #909399; flex-shrink: 0; }
 .interest-tag { cursor: pointer; font-size: 13px; padding: 8px 16px; border-radius: 20px; transition: all 0.2s; }
 .interest-tag:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
 .history-panel { width: 240px; min-width: 220px; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); display: flex; flex-direction: column; overflow: hidden; }

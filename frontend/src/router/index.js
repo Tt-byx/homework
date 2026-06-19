@@ -62,6 +62,11 @@ const routes = [
         name: 'AdminDigitalHuman',
         component: () => import('@/views/admin/DigitalHumanView.vue'),
       },
+      {
+        path: 'system',
+        name: 'AdminSystem',
+        component: () => import('@/views/admin/SystemConfigView.vue'),
+      },
     ],
   },
 ]

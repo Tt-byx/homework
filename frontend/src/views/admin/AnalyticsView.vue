@@ -10,9 +10,12 @@ import {
   getPeakPeriods,
   getTopAttractions,
 } from '@/api/analytics'
+import request from '@/api/request'
 
 // ── State ──
 const loading = ref(false)
+const marketingLoading = ref(false)
+const marketingSuggestions = ref('')
 const importing = ref(false)
 const dataImported = ref(false)
 
@@ -417,6 +420,22 @@ function truncate(str, len) {
   return str.length > len ? str.slice(0, len) + '…' : str
 }
 
+// ── Marketing Analysis ──
+async function generateMarketing() {
+  marketingLoading.value = true
+  marketingSuggestions.value = ''
+  try {
+    // 构建数据摘要
+    const statsSummary = '景区消费分析数据概览：包含门票、餐饮、购物、交通、娱乐五项消费的月度趋势，游客年龄/性别分布，满意度评分，热门景点排行，月度客流统计。'
+    const res = await request.post('/api/analytics/marketing', { stats_summary: statsSummary })
+    marketingSuggestions.value = res?.suggestions || '暂无建议'
+  } catch (e) {
+    marketingSuggestions.value = '生成营销建议失败: ' + (e?.message || '未知错误')
+  } finally {
+    marketingLoading.value = false
+  }
+}
+
 // ── Lifecycle ──
 const allCharts = () => [consumptionChart, ageChart, genderChart, satisfactionChart, attractionsChart, peakChart]
 
@@ -517,6 +536,28 @@ function handleResize() {
           <span class="panel-hint">按访问量排序</span>
         </div>
         <div id="attractions-chart" class="chart-area chart-area--medium"></div>
+      </div>
+
+      <!-- Marketing Suggestions -->
+      <div class="panel marketing-panel">
+        <div class="panel-head">
+          <span class="panel-title">AI 营销决策建议</span>
+          <el-button
+            size="small"
+            :loading="marketingLoading"
+            @click="generateMarketing"
+            class="marketing-btn"
+          >
+            <el-icon v-if="!marketingLoading" :size="14"><MagicStick /></el-icon>
+            {{ marketingLoading ? '分析中...' : '生成营销建议' }}
+          </el-button>
+        </div>
+        <div v-if="marketingSuggestions" class="marketing-content">
+          {{ marketingSuggestions }}
+        </div>
+        <div v-else class="marketing-empty">
+          点击"生成营销建议"，AI 将基于消费分析数据为您提供营销决策参考
+        </div>
       </div>
     </template>
   </div>
@@ -672,5 +713,29 @@ function handleResize() {
     flex-direction: column;
     align-items: flex-start;
   }
+}
+
+/* Marketing */
+.marketing-btn {
+  border-color: #c4956a;
+  color: #c4956a;
+}
+
+.marketing-content {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #2d3440;
+  white-space: pre-wrap;
+  padding: 12px 16px;
+  background: #fdf8f0;
+  border-radius: 8px;
+  border-left: 3px solid #c4956a;
+}
+
+.marketing-empty {
+  font-size: 13px;
+  color: #8d95a3;
+  text-align: center;
+  padding: 24px 0;
 }
 </style>

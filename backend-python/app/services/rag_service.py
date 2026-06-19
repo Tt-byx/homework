@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from app.core.config import settings
 from app.services.embedding_service import embed_query
 from app.services.vector_store import query as chroma_query
@@ -40,8 +41,43 @@ async def retrieve_context(query: str, top_k: int = None) -> str:
     return context
 
 
+def _get_time_context() -> str:
+    """获取当前时间上下文，用于路线推荐的时间感知"""
+    now = datetime.now()
+    hour = now.hour
+    month = now.month
+
+    # 时段
+    if 6 <= hour < 12:
+        period = "上午"
+        period_tip = "适合户外活动和观光游览"
+    elif 12 <= hour < 14:
+        period = "中午"
+        period_tip = "建议安排室内景点或用餐休息"
+    elif 14 <= hour < 18:
+        period = "下午"
+        period_tip = "适合休闲漫步和文化体验"
+    else:
+        period = "傍晚/夜间"
+        period_tip = "适合夜景观赏和美食体验"
+
+    # 季节
+    if 3 <= month <= 5:
+        season = "春季"
+    elif 6 <= month <= 8:
+        season = "夏季"
+    elif 9 <= month <= 11:
+        season = "秋季"
+    else:
+        season = "冬季"
+
+    return f"当前时段：{period}（{period_tip}），当前季节：{season}"
+
+
 def build_rag_prompt(context: str, query: str) -> list[dict]:
     """组装带知识库上下文的消息列表"""
+    time_ctx = _get_time_context()
+
     system_content = (
         "你是一个专业的景区导览AI数字人助手。\n"
         "你的职责是为游客提供关于景区的准确、友好的信息和建议。\n\n"
@@ -55,8 +91,15 @@ def build_rag_prompt(context: str, query: str) -> list[dict]:
         "1. 你必须仅根据以下参考资料回答问题。不要编造或推测资料中没有的信息。\n"
         "2. 如果参考资料中没有相关信息，请诚实告知「根据现有资料，我暂时无法回答这个问题」。\n"
         "3. 适当引用具体景点名称和数据，增加回答的可信度。\n\n"
-        "【路线推荐】\n"
-        "当游客询问推荐路线时，用口语化方式介绍：先说路线名称、适合人群和预计时长，然后按顺序用「首先、接着、然后、最后」介绍每个站点，最后给温馨提示。"
+        f"【时间感知】\n{time_ctx}\n"
+        "推荐路线时请结合当前时段和季节调整建议。\n\n"
+        "【路线推荐格式】\n"
+        "当游客询问推荐路线时，按以下结构回答（不要用 Markdown 符号）：\n"
+        "路线名称：xxx\n"
+        "适合人群：xxx\n"
+        "预计时长：xxx\n"
+        "站点安排：首先→接着→然后→最后\n"
+        "温馨提示：xxx"
     )
 
     if context:

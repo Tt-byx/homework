@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import chat, knowledge, sentiment
+from app.routers import chat, knowledge, sentiment, analytics_marketing
 from app.services.vector_store import get_client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
@@ -41,6 +41,7 @@ app.add_middleware(
 app.include_router(chat.router, prefix="/api", tags=["chat"])
 app.include_router(knowledge.router, prefix="/api", tags=["knowledge"])
 app.include_router(sentiment.router, prefix="/api", tags=["sentiment"])
+app.include_router(analytics_marketing.router, prefix="/api", tags=["marketing"])
 
 
 @app.get("/health")
