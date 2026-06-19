@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+﻿import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
 
@@ -11,6 +11,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: '0.0.0.0',
     port: 8080,
     proxy: {
       '/api': {
@@ -23,7 +24,7 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/py-api/, '/api'),
       },
       '/ws': {
-        target: 'ws://localhost:10086',
+        target: 'http://localhost:10086',
         ws: true,
         changeOrigin: true,
       },

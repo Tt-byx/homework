@@ -8,6 +8,7 @@ import MessageList from '@/components/chat/MessageList.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import Live2DCanvas from '@/components/live2d/Live2DCanvas.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { getVoices, setVoice } from '@/api/voice'
 
 const chatStore = useChatStore()
 const userStore = useUserStore()
@@ -33,6 +34,33 @@ const durationOptions = [
   { label: '全天', value: '全天' },
 ]
 const selectedDuration = ref('')
+
+// ??????
+const voices = ref([])
+const currentVoice = ref('')
+const voiceLoading = ref(false)
+
+async function loadVoices() {
+  try {
+    const data = await getVoices()
+    voices.value = data.voices || []
+    currentVoice.value = data.current || ''
+  } catch { /* ignore */ }
+}
+
+async function handleVoiceChange(voiceId) {
+  if (!voiceId || voiceLoading.value) return
+  voiceLoading.value = true
+  try {
+    await setVoice(voiceId)
+    currentVoice.value = voiceId
+    ElMessage.success('?????')
+  } catch {
+    ElMessage.error('????')
+  } finally {
+    voiceLoading.value = false
+  }
+}
 
 // ── 发送消息 ──
 function handleSendText(message) {
@@ -115,34 +143,24 @@ watch(() => chatStore.loading, async (loading, oldLoading) => {
 })
 
 // ── 数字人口型同步 ──
-let _mouthRAF = 0
-
-watch(() => chatStore.audioPlaying, (playing) => {
-  if (_mouthRAF) { cancelAnimationFrame(_mouthRAF); _mouthRAF = 0 }
-  if (playing) {
-    const tick = () => {
-      if (!live2dRef.value || !chatStore.audioPlaying) {
-        // 音频停止：立刻闭嘴
-        live2dRef.value?.setLipSync(0)
-        _mouthRAF = 0
-        return
-      }
-      // 大幅度一张一合：0.1 ~ 1.0
-      const open = 0.1 + 0.9 * Math.abs(Math.sin(performance.now() / 1000 * 6))
-      live2dRef.value.setLipSync(open)
-      _mouthRAF = requestAnimationFrame(tick)
-    }
-    _mouthRAF = requestAnimationFrame(tick)
-  } else {
-    // audioPlaying = false：立刻闭嘴
-    live2dRef.value?.setLipSync(0)
+// ?? ???????????? viseme? ??
+watch([() => chatStore.lipSyncText, () => chatStore.lipSyncDuration], ([text, duration]) => {
+  if (text && live2dRef.value && duration > 0) {
+    live2dRef.value.startTextLipSync(text, duration)
   }
 })
 
-// loading 结束时确保嘴巴闭合
+// ?????????
+watch(() => chatStore.audioPlaying, (playing) => {
+  if (!playing) {
+    live2dRef.value?.stopTextLipSync()
+  }
+})
+
+// loading ?????????
 watch(() => chatStore.loading, (loading) => {
   if (!loading) {
-    if (_mouthRAF) { cancelAnimationFrame(_mouthRAF); _mouthRAF = 0 }
+    live2dRef.value?.stopTextLipSync()
     live2dRef.value?.setLipSync(0)
   }
 })
@@ -161,13 +179,13 @@ function formatTime(time) {
 }
 
 onMounted(async () => {
+  loadVoices()
   chatStore.initWebSocket()
   await userStore.fetchMe()
   await loadLastConversation()
 })
 
 onUnmounted(() => {
-  if (_mouthRAF) cancelAnimationFrame(_mouthRAF)
   chatStore.destroy()
 })
 </script>
@@ -185,6 +203,25 @@ onUnmounted(() => {
         </div>
 
         <div class="chat-container">
+          <!-- ??????? -->
+          <div class="voice-selector" v-if="voices.length > 0">
+            <span class="voice-label">?? ????</span>
+            <el-select
+              v-model="currentVoice"
+              size="small"
+              :loading="voiceLoading"
+              @change="handleVoiceChange"
+              placeholder="????"
+              style="width: 160px"
+            >
+              <el-option
+                v-for="v in voices"
+                :key="v.id"
+                :label="`${v.name} (${v.gender})`"
+                :value="v.id"
+              />
+            </el-select>
+          </div>
           <div v-if="chatStore.messages.length === 0" class="interest-tags">
             <p class="tags-title">🎯 我感兴趣的方向</p>
             <div class="tags-row">
@@ -257,6 +294,8 @@ onUnmounted(() => {
 .connection-hint .dot { width: 6px; height: 6px; border-radius: 50%; background: #e6a23c; animation: blink 1.5s ease-in-out infinite; }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .chat-container { flex: 1; display: flex; flex-direction: column; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); overflow: hidden; min-height: 0; }
+.voice-selector { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 1px solid #f0f0f0; flex-shrink: 0; }
+.voice-label { font-size: 13px; color: #606266; white-space: nowrap; font-weight: 500; }
 .interest-tags { padding: 20px; border-bottom: 1px solid #f0f0f0; flex-shrink: 0; }
 .tags-title { font-size: 14px; color: #606266; margin-bottom: 12px; }
 .tags-row { display: flex; gap: 10px; flex-wrap: wrap; }

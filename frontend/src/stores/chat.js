@@ -38,6 +38,9 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
 
+    // ??????????????
+    let _currentSentenceText = ''
+
     chatWs.onTextChunk = (text) => {
       if (currentAssistantIndex === -1) {
         currentAssistantIndex = messages.value.length
@@ -48,9 +51,20 @@ export const useChatStore = defineStore('chat', () => {
         })
       }
       messages.value[currentAssistantIndex].content += text
+      // ?????????????
+      _currentSentenceText += text
+      const endMarks = ['?', '?', '?', '?', '\n']
+      if (endMarks.some(m => text.includes(m))) {
+        // ????????????????
+        _currentSentenceText = _currentSentenceText.trim()
+      }
     }
 
     chatWs.onAudioChunk = (audioBase64, format) => {
+      // ?????????????????
+      const sentenceForLipSync = _currentSentenceText
+      _currentSentenceText = ''
+      audioPlayer._pendingLipText = sentenceForLipSync
       audioPlayer.enqueue(audioBase64, format || 'wav')
     }
 
@@ -60,6 +74,7 @@ export const useChatStore = defineStore('chat', () => {
 
     chatWs.onDone = (data) => {
       loading.value = false
+      _currentSentenceText = ''
       if (data.session_id) {
         sessionId.value = data.session_id
       }
@@ -136,8 +151,19 @@ export const useChatStore = defineStore('chat', () => {
   function onAudioStart(cb) { _onAudioStartListeners.push(cb) }
   function onAudioEnd(cb) { _onAudioEndListeners.push(cb) }
 
-  audioPlayer.onPlayStart = () => {
+  // ????????
+  const lipSyncText = ref('')
+  const lipSyncDuration = ref(0)
+
+  audioPlayer.onPlayStart = (duration) => {
     audioPlaying.value = true
+    // ??????????
+    const text = audioPlayer._pendingLipText || ''
+    audioPlayer._pendingLipText = ''
+    if (text) {
+      lipSyncText.value = text
+      lipSyncDuration.value = (duration && duration > 0) ? duration * 1000 : Math.max(text.length * 180, 2000)
+    }
     _onAudioStartListeners.forEach(cb => cb())
   }
   audioPlayer.onPlayEnd = () => {
@@ -153,6 +179,8 @@ export const useChatStore = defineStore('chat', () => {
     isWsConnected,
     audioPlaying,
     currentExpression,
+    lipSyncText,
+    lipSyncDuration,
     audioPlayer,
     initWebSocket,
     sendTextMessage,

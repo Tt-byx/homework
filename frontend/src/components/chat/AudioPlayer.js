@@ -21,7 +21,7 @@ export class AudioPlayer {
     this._currentSource = null
 
     // 回调钩子
-    this.onPlayStart = null
+    this.onPlayStart = null  // callback(durationSeconds)
     this.onPlayEnd = null
   }
 
@@ -108,7 +108,8 @@ export class AudioPlayer {
     const buffer = this._playQueue.shift()
 
     // 通知开始播放
-    this.onPlayStart?.()
+    const duration = buffer.duration
+      this.onPlayStart?.(duration)
 
     await this._playBuffer(buffer)
 

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from openai import AsyncOpenAI
+import httpx
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -10,7 +11,7 @@ _client = None
 def _get_client():
     global _client
     if _client is None:
-        _client = AsyncOpenAI(
+        _client = AsyncOpenAI(http_client=httpx.AsyncClient(trust_env=False),
             api_key=settings.embedding_api_key or "not-set",
             base_url=settings.embedding_base_url,
         )

@@ -1,6 +1,7 @@
 ﻿<script setup>
 import { ref } from 'vue'
 import { submitFeedback } from '@/api/analytics'
+import { synthesizeTTS } from '@/api/voice'
 
 const props = defineProps({
   message: {
@@ -32,6 +33,28 @@ function formatTime(timestamp) {
   if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`
   return date.toLocaleDateString()
 }
+
+const playing = ref(false)
+let currentAudio = null
+
+async function playTTS() {
+  if (playing.value) {
+    if (currentAudio) { currentAudio.pause(); currentAudio = null }
+    playing.value = false
+    return
+  }
+  try {
+    playing.value = true
+    const blob = await synthesizeTTS(props.message.content)
+    const url = URL.createObjectURL(blob)
+    currentAudio = new Audio(url)
+    currentAudio.onended = () => { playing.value = false; currentAudio = null; URL.revokeObjectURL(url) }
+    currentAudio.onerror = () => { playing.value = false; currentAudio = null; URL.revokeObjectURL(url) }
+    currentAudio.play()
+  } catch {
+    playing.value = false
+  }
+}
 </script>
 
 <template>
@@ -49,6 +72,14 @@ function formatTime(timestamp) {
         <!-- 语音消息标识 -->
         <span v-if="message.isVoice" class="voice-tag">🎤</span>
         <span class="text">{{ message.content }}</span>
+        <!-- ???? TTS ?? -->
+        <button
+          v-if="message.role === 'assistant' && !message.isError && message.content"
+          class="tts-play-btn"
+          :class="{ playing: playing }"
+          @click.stop="playTTS"
+          :title="playing ? '??' : '????'"
+        >{{ playing ? '?' : '??' }}</button>
       </div>
       <div class="time">{{ formatTime(message.timestamp) }}</div>
       <!-- 反馈按钮：仅 AI 消息显示 -->
@@ -174,5 +205,38 @@ function formatTime(timestamp) {
   opacity: 1;
   background: #e8f0eb;
   border-color: #5a8a6a;
+}
+
+/* TTS ???? */
+.tts-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 8px;
+  background: none;
+  border: 1px solid #dcdfe6;
+  border-radius: 14px;
+  cursor: pointer;
+  font-size: 13px;
+  opacity: 0;
+  transition: all 0.2s;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.chat-message:hover .tts-play-btn {
+  opacity: 0.7;
+}
+.tts-play-btn:hover {
+  opacity: 1 !important;
+  background: #ecf5ff;
+  border-color: #409eff;
+}
+.tts-play-btn.playing {
+  opacity: 1;
+  background: #409eff;
+  color: #fff;
+  border-color: #409eff;
 }
 </style>

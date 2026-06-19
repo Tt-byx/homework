@@ -38,14 +38,49 @@ def _keyword_fallback_expression(text: str) -> str:
     return "Normal"
 
 
+# ??????????????????????????????????????????????
+# TTS ??????
+# ??????????????????????????????????????????????
+
+@router.get("/tts/voices")
+async def list_voices():
+    """??????? TTS ??????"""
+    return {
+        "current": tts_service.voice,
+        "voices": [
+            {"id": vid, "name": v["name"], "gender": v["gender"], "style": v["style"]}
+            for vid, v in tts_service.AVAILABLE_VOICES.items()
+        ]
+    }
+
+@router.post("/tts/voice")
+async def set_voice(voice_id: str = Form(...)):
+    """?? TTS ????"""
+    if voice_id not in tts_service.AVAILABLE_VOICES:
+        raise HTTPException(status_code=400, detail=f"????: {voice_id}???: {list(tts_service.AVAILABLE_VOICES.keys())}")
+    tts_service.voice = voice_id
+    voice_info = tts_service.AVAILABLE_VOICES[voice_id]
+    logger.info(f"TTS ?????: {voice_info['name']} ({voice_id})")
+    return {"voice": voice_id, "name": voice_info["name"], "message": f"????{voice_info['name']}"}
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """文字聊天接口（RAG + TTS 按句合成 + 情感检测）"""
+    # ??????
+    user_emotion = "neutral"
     try:
-        reply = await chat_with_rag(request.message)
+        sentiment_result = await analyze_sentiment(request.message)
+        user_emotion = sentiment_result.get("emotion", "neutral")
+        logger.info(f"????: {user_emotion}")
+    except Exception as e:
+        logger.warning(f"????????: {e}")
+
+    try:
+        reply = await chat_with_rag(request.message, user_emotion)
     except Exception:
         try:
-            reply = await chat_with_mimo(request.message)
+            reply = await chat_with_mimo(request.message, user_emotion)
         except Exception as e2:
             raise HTTPException(status_code=500, detail=f"AI服务调用失败: {str(e2)}")
 
@@ -151,6 +186,13 @@ async def chat_stream_endpoint(
             yield _sse_event("done", {"session_id": session_id, "total_text": ""})
             return
 
+        # 用户情绪检测
+        try:
+            sentiment_result = await analyze_sentiment(input_text)
+            user_emotion = sentiment_result.get("emotion", "neutral")
+        except Exception:
+            user_emotion = "neutral"
+
         # RAG 检索知识库
         context_chunks = []
         try:
@@ -159,6 +201,10 @@ async def chat_stream_endpoint(
                 context_chunks = [context_str]
         except Exception as e:
             logger.warning(f"RAG search failed: {e}")
+
+        # 将用户情绪注入上下文
+        if user_emotion and user_emotion != "neutral":
+            context_chunks = [f"[用户当前情绪: {user_emotion}]"] + context_chunks
 
         # 流式生成回答 + 逐句合成语音
         sentence_buffer = ""
