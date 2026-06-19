@@ -17,25 +17,25 @@ router = APIRouter()
 
 
 async def detect_expression(text: str) -> str:
-    """使用 LLM 情感分析检测表情，失败时降级到关键词"""
-    try:
-        result = await analyze_sentiment(text)
-        return result.get("expression", "Normal")
-    except Exception:
-        return _keyword_fallback_expression(text)
+    """基于关键词的快速情感检测，返回 Live2D 表情名"""
+    return _keyword_fallback_expression(text)
 
 
 def _keyword_fallback_expression(text: str) -> str:
-    """关键词降级表情检测"""
-    if any(w in text for w in ["抱歉", "无法", "不知道", "没有找到", "暂时无法", "错误", "失败"]):
+    """关键词表情检测（快速可靠，不依赖网络）"""
+    if not text:
+        return "Normal"
+    if any(w in text for w in ["抱歉", "无法", "不知道", "没有找到", "暂时无法", "错误", "失败", "遗憾", "对不起"]):
         return "Cry"
-    if any(w in text for w in ["恭喜", "太好了", "开心", "高兴", "快乐", "棒", "赞", "喜欢", "美丽", "精彩"]):
+    if any(w in text for w in ["恭喜", "太好了", "开心", "高兴", "快乐", "棒", "赞", "喜欢", "美丽", "精彩", "欢迎", "祝", "感谢", "谢谢"]):
         return "Smile"
     if any(w in text for w in ["注意", "小心", "警告", "禁止", "危险", "请勿", "不要"]):
         return "Angry"
-    if any(w in text for w in ["？", "吗", "呢", "什么", "怎么", "为什么", "请问"]):
+    if any(w in text for w in ["？", "吗", "呢", "什么", "怎么", "为什么", "请问", "好奇"]):
         return "Star"
-    return "Normal"
+    if any(w in text for w in ["想想", "思考", "让我", "嗯"]):
+        return "Circle"
+    return "Smile"  # 默认微笑（导游应该友好）
 
 
 # ??????????????????????????????????????????????
@@ -144,10 +144,11 @@ async def asr_endpoint(audio: UploadFile = File(...)):
 @router.post("/tts")
 async def tts_endpoint(
     text: str = Form(...),
+    voice: str = Form(None),
 ):
     """TTS: 文字转语音"""
     try:
-        audio_bytes = await tts_service.synthesize(text)
+        audio_bytes = await tts_service.synthesize(text, voice=voice)
         return Response(
             content=audio_bytes,
             media_type="audio/mpeg",
@@ -217,10 +218,10 @@ async def chat_stream_endpoint(
                 full_text += text_chunk
                 yield _sse_event("text_chunk", {"text": text_chunk})
 
-                # 首句完成时发送表情
-                if not first_expression_sent and sentence_buffer and sentence_buffer[-1] in end_marks:
+                # 收集到一定文字后发送表情（不等句子完成）
+                if not first_expression_sent and len(full_text) > 10:
                     first_expression_sent = True
-                    expression = await detect_expression(sentence_buffer)
+                    expression = _keyword_fallback_expression(full_text)
                     yield _sse_event("expression", {"expression": expression})
 
                 # 遇到句号等标点，合成这一句的语音（剥离Markdown便于朗读）
@@ -256,7 +257,7 @@ async def chat_stream_endpoint(
                         audio_b64 = base64.b64encode(audio_bytes).decode()
                         yield _sse_event("audio_chunk", {
                             "audio": audio_b64,
-                            "format": "wav"
+                            "format": "mp3"
                         })
             except Exception as e:
                 logger.warning(f"TTS final failed: {e}")

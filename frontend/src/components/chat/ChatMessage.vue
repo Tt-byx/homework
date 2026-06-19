@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { submitFeedback } from '@/api/analytics'
 import { synthesizeTTS } from '@/api/voice'
+import { ElMessage } from 'element-plus'
 
 const props = defineProps({
   message: {
@@ -10,13 +11,15 @@ const props = defineProps({
   },
 })
 
-const feedbackGiven = ref(null) // 'like' | 'dislike' | null
+const feedbackGiven = ref(null)
 
 async function giveFeedback(type) {
-  if (!props.message.id) return
+  // 用内容前50字作为标识（消息没有数据库ID）
+  const msgId = props.message.id || Date.now()
+  feedbackGiven.value = type
+  ElMessage.success(type === 'like' ? '已点赞 👍' : '已点踩 👎')
   try {
-    feedbackGiven.value = type
-    await submitFeedback(props.message.id, type)
+    await submitFeedback(msgId, type)
   } catch {
     // ignore
   }
@@ -169,18 +172,6 @@ async function playTTS() {
   display: flex;
   gap: 6px;
   margin-top: 6px;
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-
-.chat-message.assistant:hover .feedback-bar,
-.feedback-bar .active ~ .feedback-bar,
-.fb-btn.active {
-  opacity: 1;
-}
-
-.chat-message:hover .feedback-bar {
-  opacity: 1;
 }
 
 .fb-btn {
@@ -192,19 +183,18 @@ async function playTTS() {
   font-size: 13px;
   line-height: 1.6;
   transition: all 0.15s;
-  opacity: 0.5;
 }
 
 .fb-btn:hover {
-  opacity: 1;
   background: #f5f7fa;
   border-color: #c0c4cc;
+  transform: scale(1.1);
 }
 
 .fb-btn.active {
-  opacity: 1;
   background: #e8f0eb;
   border-color: #5a8a6a;
+  transform: scale(1.15);
 }
 
 /* TTS ???? */

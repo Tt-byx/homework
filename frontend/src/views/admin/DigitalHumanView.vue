@@ -43,7 +43,10 @@ async function previewVoice() {
   previewing.value = true
   try {
     const sampleText = '您好，欢迎来到景区，我是您的智能导游，很高兴为您服务！'
-    const response = await fetch(`/api/tts?text=${encodeURIComponent(sampleText)}&voice=${config.value.voice}`)
+    const formData = new FormData()
+    formData.append('text', sampleText)
+    formData.append('voice', config.value.voice)
+    const response = await fetch('/api/tts', { method: 'POST', body: formData })
     if (!response.ok) throw new Error('TTS 失败')
     const blob = await response.blob()
     const audio = new Audio(URL.createObjectURL(blob))

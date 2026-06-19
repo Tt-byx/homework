@@ -10,9 +10,9 @@ const chatStore = useChatStore()
 const userStore = useUserStore()
 const live2dRef = ref(null)
 
-// 通话状态: idle | listening | processing | speaking
-const callState = ref('idle')
-const statusText = ref('点击开始对话')
+// 通话状态: idle | listening | processing | speaking | connecting
+const callState = ref('connecting')
+const statusText = ref('正在连接...')
 const isHolding = ref(false)
 
 // 录音
@@ -145,6 +145,18 @@ function endCall() {
 onMounted(async () => {
   await userStore.fetchMe()
   chatStore.initWebSocket()
+
+  // 等待 WebSocket 连接
+  const waitForWs = () => new Promise((resolve) => {
+    if (chatStore.isWsConnected) return resolve()
+    const unwatch = watch(() => chatStore.isWsConnected, (connected) => {
+      if (connected) { unwatch(); resolve() }
+    })
+    setTimeout(() => { unwatch(); resolve() }, 5000) // 最多等5秒
+  })
+  await waitForWs()
+  callState.value = 'idle'
+  statusText.value = '点击开始对话'
 })
 
 onUnmounted(() => {
@@ -199,6 +211,15 @@ onUnmounted(() => {
       >
         <span class="btn-icon spin">⏳</span>
         <span>思考中...</span>
+      </button>
+
+      <button
+        v-else-if="callState === 'connecting'"
+        class="call-btn processing"
+        disabled
+      >
+        <span class="btn-icon spin">⏳</span>
+        <span>连接中...</span>
       </button>
 
       <button class="end-btn" @click="endCall">
