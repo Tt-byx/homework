@@ -66,10 +66,12 @@ export class AudioPlayer {
       for (const base64 of chunks) {
         try {
           const buf = this._base64ToArrayBuffer(base64)
+          console.log('[AudioPlayer] decoding chunk, bytes:', buf.byteLength)
           const decoded = await this.audioContext.decodeAudioData(buf)
+          console.log('[AudioPlayer] decoded OK, duration:', decoded.duration.toFixed(2), 's')
           decodedBuffers.push(decoded)
         } catch (e) {
-          console.warn('音频解码失败，跳过:', e)
+          console.warn('[AudioPlayer] 解码失败，跳过:', e)
         }
       }
 
@@ -127,6 +129,7 @@ export class AudioPlayer {
       const source = this.audioContext.createBufferSource()
       source.buffer = audioBuffer
       source.connect(this.analyser)
+      // analyser 已经在 init() 中连接到 destination，音频自动输出
 
       this._currentSource = source
 

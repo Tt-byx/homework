@@ -61,7 +61,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     chatWs.onAudioChunk = (audioBase64, format) => {
-      // ?????????????????
+      console.log('[Audio] chunk received, format:', format, 'size:', audioBase64?.length)
       const sentenceForLipSync = _currentSentenceText
       _currentSentenceText = ''
       audioPlayer._pendingLipText = sentenceForLipSync
