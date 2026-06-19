@@ -51,7 +51,6 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     chatWs.onAudioChunk = (audioBase64, format) => {
-      audioPlaying.value = true
       audioPlayer.enqueue(audioBase64, format || 'wav')
     }
 
@@ -130,9 +129,20 @@ export const useChatStore = defineStore('chat', () => {
     audioPlayer.destroy()
   }
 
-  // AudioPlayer 回调 — 更新播放状态
+  // AudioPlayer 回调链 — 管理 audioPlaying 状态 + 通知外部监听器
+  let _onAudioStartListeners = []
+  let _onAudioEndListeners = []
+
+  function onAudioStart(cb) { _onAudioStartListeners.push(cb) }
+  function onAudioEnd(cb) { _onAudioEndListeners.push(cb) }
+
+  audioPlayer.onPlayStart = () => {
+    audioPlaying.value = true
+    _onAudioStartListeners.forEach(cb => cb())
+  }
   audioPlayer.onPlayEnd = () => {
     audioPlaying.value = false
+    _onAudioEndListeners.forEach(cb => cb())
   }
 
   return {
@@ -149,5 +159,7 @@ export const useChatStore = defineStore('chat', () => {
     sendVoiceMessage,
     clearMessages,
     destroy,
+    onAudioStart,
+    onAudioEnd,
   }
 })

@@ -1,6 +1,7 @@
 package com.scenic.ai.websocket;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * WebSocket 统一消息协议
@@ -21,11 +22,13 @@ public class WebSocketMessage {
 
     private String type;
     private String content;
+    @JsonProperty("session_id")
     private String sessionId;
     private String format;
     private String audio;      // Base64 编码的音频
     private String text;
     private String message;
+    @JsonProperty("total_text")
     private String totalText;
     private String expression;  // 数字人表情
 

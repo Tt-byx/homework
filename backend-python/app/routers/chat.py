@@ -106,8 +106,8 @@ async def tts_endpoint(
         audio_bytes = await tts_service.synthesize(text)
         return Response(
             content=audio_bytes,
-            media_type="audio/wav",
-            headers={"Content-Disposition": "attachment; filename=tts_output.wav"}
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "attachment; filename=tts_output.mp3"}
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"TTS error: {str(e)}")
@@ -178,7 +178,7 @@ async def chat_stream_endpoint(
                                 audio_b64 = base64.b64encode(audio_bytes).decode()
                                 yield _sse_event("audio_chunk", {
                                     "audio": audio_b64,
-                                    "format": "wav"
+                                    "format": "mp3"
                                 })
                         except Exception as e:
                             logger.warning(f"TTS failed: {e}")

@@ -2,21 +2,22 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
-import { getConversations, getConversationMessages } from '@/api/auth'
+import { getConversations, getConversationMessages, deleteConversation, renameConversation } from '@/api/auth'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import MessageList from '@/components/chat/MessageList.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import Live2DCanvas from '@/components/live2d/Live2DCanvas.vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const chatStore = useChatStore()
 const userStore = useUserStore()
 const live2dRef = ref(null)
 const isLive2DReady = ref(false)
 
-// 历史对话
 const conversations = ref([])
 const activeConvId = ref(null)
+const editingId = ref(null)
+const editTitle = ref('')
 
 const interestTags = [
   { icon: '🏛️', label: '历史文化', prompt: '我对历史文化感兴趣，请推荐一条游览路线', type: '' },
@@ -26,133 +27,132 @@ const interestTags = [
   { icon: '🍜', label: '美食禅意', prompt: '我想品尝美食和体验禅意文化，推荐一条路线', type: 'info' },
 ]
 
-let fullReplyText = ''
-let textLipSyncStarted = false
-
+// ── 发送消息 ──
 function handleSendText(message) {
-  activeConvId.value = null
   chatStore.sendTextMessage(message)
 }
 
-// 加载历史对话列表
+// ── 对话列表管理 ──
 async function loadConversations() {
   try {
     const data = await getConversations()
     conversations.value = Array.isArray(data) ? data : []
-  } catch {
-    conversations.value = []
-  }
+  } catch { conversations.value = [] }
 }
 
-// 点击历史对话加载消息
-async function loadConversation(conv) {
+async function loadLastConversation() {
+  await loadConversations()
+  if (conversations.value.length > 0) await switchConversation(conversations.value[0])
+}
+
+async function switchConversation(conv) {
+  if (activeConvId.value === conv.id) return
   try {
     activeConvId.value = conv.id
     const msgs = await getConversationMessages(conv.id)
     chatStore.clearMessages()
-    // 直接设置 messages
-    if (Array.isArray(msgs)) {
-      chatStore.messages.splice(0, chatStore.messages.length,
-        ...msgs.map(m => ({
-          role: m.role,
-          content: m.content,
-          timestamp: new Date(m.createdAt).getTime(),
-        }))
-      )
-      chatStore.sessionId = conv.sessionId
+    if (Array.isArray(msgs) && msgs.length > 0) {
+      chatStore.messages.splice(0, 0, ...msgs.map(m => ({
+        role: m.role, content: m.content, timestamp: new Date(m.createdAt).getTime(),
+      })))
     }
-  } catch (err) {
-    ElMessage.error('加载对话失败')
-  }
+    chatStore.sessionId = conv.sessionId
+  } catch { ElMessage.error('加载对话失败') }
 }
 
-// 新建对话
 function newConversation() {
   activeConvId.value = null
   chatStore.clearMessages()
 }
 
+async function handleDelete(conv, event) {
+  event.stopPropagation()
+  try {
+    await ElMessageBox.confirm(`删除「${conv.title}」？`, '确认删除', { type: 'warning' })
+    await deleteConversation(conv.id)
+    if (activeConvId.value === conv.id) { activeConvId.value = null; chatStore.clearMessages() }
+    await loadConversations()
+  } catch (err) { if (err !== 'cancel') ElMessage.error('删除失败') }
+}
+
+function startRename(conv, event) {
+  event.stopPropagation()
+  editingId.value = conv.id
+  editTitle.value = conv.title
+}
+
+async function confirmRename(conv) {
+  const newTitle = editTitle.value.trim()
+  if (!newTitle || newTitle === conv.title) { editingId.value = null; return }
+  try { await renameConversation(conv.id, newTitle); conv.title = newTitle } catch { ElMessage.error('重命名失败') }
+  editingId.value = null
+}
+
 // 对话完成后刷新列表
-watch(() => chatStore.loading, (loading, oldLoading) => {
+watch(() => chatStore.loading, async (loading, oldLoading) => {
   if (oldLoading && !loading) {
-    loadConversations()
-  }
-})
-
-// 数字人口型同步
-watch(() => chatStore.loading, (loading) => {
-  if (loading) {
-    live2dRef.value?.setExpression('Smile')
-    fullReplyText = ''
-    textLipSyncStarted = false
-  }
-})
-
-watch(() => chatStore.currentExpression, (expr) => {
-  if (expr && live2dRef.value) {
-    live2dRef.value.setExpression(expr)
-  }
-})
-
-watch(
-  () => {
-    const msgs = chatStore.messages
-    if (msgs.length === 0) return ''
-    const last = msgs[msgs.length - 1]
-    if (last.role === 'assistant') return last.content
-    return ''
-  },
-  (text) => {
-    if (!text || !live2dRef.value) return
-    fullReplyText = text
-    if (!textLipSyncStarted && text.length > 0) {
-      textLipSyncStarted = true
-    }
-    if (textLipSyncStarted) {
-      live2dRef.value.startTextLipSync(fullReplyText)
+    await loadConversations()
+    if (chatStore.sessionId) {
+      const found = conversations.value.find(c => c.sessionId === chatStore.sessionId)
+      if (found) activeConvId.value = found.id
     }
   }
-)
+})
+
+// ── 数字人口型同步 ──
+let _mouthRAF = 0
 
 watch(() => chatStore.audioPlaying, (playing) => {
-  if (playing) live2dRef.value?.stopTextLipSync()
+  if (_mouthRAF) { cancelAnimationFrame(_mouthRAF); _mouthRAF = 0 }
+  if (playing) {
+    const tick = () => {
+      if (!live2dRef.value || !chatStore.audioPlaying) {
+        // 音频停止：立刻闭嘴
+        live2dRef.value?.setLipSync(0)
+        _mouthRAF = 0
+        return
+      }
+      // 大幅度一张一合：0.1 ~ 1.0
+      const open = 0.1 + 0.9 * Math.abs(Math.sin(performance.now() / 1000 * 6))
+      live2dRef.value.setLipSync(open)
+      _mouthRAF = requestAnimationFrame(tick)
+    }
+    _mouthRAF = requestAnimationFrame(tick)
+  } else {
+    // audioPlaying = false：立刻闭嘴
+    live2dRef.value?.setLipSync(0)
+  }
 })
 
-if (chatStore.audioPlayer) {
-  chatStore.audioPlayer.onPlayStart = (analyser) => {
-    if (analyser && live2dRef.value) {
-      textLipSyncStarted = false
-      live2dRef.value.startLipSyncFromAnalyser(analyser)
-    }
+// loading 结束时确保嘴巴闭合
+watch(() => chatStore.loading, (loading) => {
+  if (!loading) {
+    if (_mouthRAF) { cancelAnimationFrame(_mouthRAF); _mouthRAF = 0 }
+    live2dRef.value?.setLipSync(0)
   }
-  chatStore.audioPlayer.onPlayEnd = () => {
-    live2dRef.value?.stopLipSync()
-    if (chatStore.loading && fullReplyText) {
-      live2dRef.value?.startTextLipSync(fullReplyText)
-      textLipSyncStarted = true
-    }
-  }
-}
+})
 
 function onLive2DReady() {
   isLive2DReady.value = true
-  live2dRef.value?.setExpression('Normal')
 }
 
 function formatTime(time) {
   if (!time) return ''
   const d = new Date(time)
+  const now = new Date()
   const pad = (n) => String(n).padStart(2, '0')
+  if (d.toDateString() === now.toDateString()) return `今天 ${pad(d.getHours())}:${pad(d.getMinutes())}`
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 onMounted(async () => {
   chatStore.initWebSocket()
   await userStore.fetchMe()
-  loadConversations()
+  await loadLastConversation()
 })
 
 onUnmounted(() => {
+  if (_mouthRAF) cancelAnimationFrame(_mouthRAF)
   chatStore.destroy()
 })
 </script>
@@ -160,54 +160,33 @@ onUnmounted(() => {
 <template>
   <div class="chat-view">
     <div class="chat-layout">
-      <!-- 左侧：数字人 -->
       <div class="avatar-panel">
-        <Live2DCanvas
-          ref="live2dRef"
-          class="live2d-wrapper"
-          @ready="onLive2DReady"
-        />
+        <Live2DCanvas ref="live2dRef" class="live2d-wrapper" @ready="onLive2DReady" />
       </div>
 
-      <!-- 中间：聊天 -->
       <div class="chat-panel">
         <div v-if="!chatStore.isWsConnected" class="connection-hint">
-          <span class="dot"></span>
-          聊天服务未连接
+          <span class="dot"></span> 聊天服务未连接
         </div>
 
         <div class="chat-container">
-          <div v-if="chatStore.messages.length === 0 && !activeConvId" class="interest-tags">
+          <div v-if="chatStore.messages.length === 0" class="interest-tags">
             <p class="tags-title">🎯 我感兴趣的方向</p>
             <div class="tags-row">
-              <el-tag
-                v-for="tag in interestTags"
-                :key="tag.label"
-                :type="tag.type"
-                class="interest-tag"
-                effect="plain"
-                @click="handleSendText(tag.prompt)"
-              >
+              <el-tag v-for="tag in interestTags" :key="tag.label" :type="tag.type"
+                class="interest-tag" effect="plain" @click="handleSendText(tag.prompt)">
                 {{ tag.icon }} {{ tag.label }}
               </el-tag>
             </div>
           </div>
 
           <MessageList :messages="chatStore.messages" :loading="chatStore.loading">
-            <ChatMessage
-              v-for="(msg, index) in chatStore.messages"
-              :key="index"
-              :message="msg"
-            />
+            <ChatMessage v-for="(msg, i) in chatStore.messages" :key="i" :message="msg" />
           </MessageList>
-          <ChatInput
-            :loading="chatStore.loading"
-            @send-text="handleSendText"
-          />
+          <ChatInput :loading="chatStore.loading" @send-text="handleSendText" />
         </div>
       </div>
 
-      <!-- 右侧：历史对话 -->
       <div class="history-panel">
         <div class="history-header">
           <span class="history-title">💬 历史对话</span>
@@ -215,22 +194,27 @@ onUnmounted(() => {
             <el-icon><Plus /></el-icon> 新对话
           </el-button>
         </div>
-
         <div class="history-list">
-          <div
-            v-for="conv in conversations"
-            :key="conv.id"
-            class="history-item"
-            :class="{ active: activeConvId === conv.id }"
-            @click="loadConversation(conv)"
-          >
-            <div class="conv-title">{{ conv.title || '新对话' }}</div>
-            <div class="conv-time">{{ formatTime(conv.updatedAt) }}</div>
+          <div v-for="conv in conversations" :key="conv.id"
+            class="history-item" :class="{ active: activeConvId === conv.id }"
+            @click="switchConversation(conv)">
+            <template v-if="editingId === conv.id">
+              <input v-model="editTitle" class="rename-input" maxlength="30"
+                @keyup.enter="confirmRename(conv)" @keyup.escape="editingId = null"
+                @blur="confirmRename(conv)" @click.stop autofocus />
+            </template>
+            <template v-else>
+              <div class="conv-title">{{ conv.title || '新对话' }}</div>
+              <div class="conv-meta">
+                <span class="conv-time">{{ formatTime(conv.updatedAt) }}</span>
+                <span class="conv-actions">
+                  <el-icon class="action-icon" @click.stop="startRename(conv, $event)"><Edit /></el-icon>
+                  <el-icon class="action-icon danger" @click.stop="handleDelete(conv, $event)"><Delete /></el-icon>
+                </span>
+              </div>
+            </template>
           </div>
-
-          <div v-if="conversations.length === 0" class="history-empty">
-            暂无历史对话
-          </div>
+          <div v-if="conversations.length === 0" class="history-empty">暂无历史对话</div>
         </div>
       </div>
     </div>
@@ -238,199 +222,37 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.chat-view {
-  width: 100%;
-  height: calc(100vh - 60px);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-}
-
-.chat-layout {
-  flex: 1;
-  display: flex;
-  gap: 12px;
-  min-height: 0;
-}
-
-/* 数字人面板 */
-.avatar-panel {
-  width: 360px;
-  min-width: 280px;
-  display: flex;
-  flex-direction: column;
-  background: linear-gradient(180deg, #e8f4f8 0%, #d4e9d7 40%, #f0ebe3 100%);
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
-}
-
-.live2d-wrapper {
-  flex: 1;
-  min-height: 0;
-}
-
-/* 聊天面板 */
-.chat-panel {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.connection-hint {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
-  background: #fdf6ec;
-  border-radius: 6px;
-  color: #e6a23c;
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.connection-hint .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #e6a23c;
-  animation: blink 1.5s ease-in-out infinite;
-}
-
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-
-.chat-container {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-  overflow: hidden;
-  min-height: 0;
-}
-
-.interest-tags {
-  padding: 20px;
-  border-bottom: 1px solid #f0f0f0;
-  flex-shrink: 0;
-}
-
-.tags-title {
-  font-size: 14px;
-  color: #606266;
-  margin-bottom: 12px;
-}
-
-.tags-row {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.interest-tag {
-  cursor: pointer;
-  font-size: 13px;
-  padding: 8px 16px;
-  border-radius: 20px;
-  transition: all 0.2s;
-}
-
-.interest-tag:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-/* 历史对话面板 */
-.history-panel {
-  width: 220px;
-  min-width: 200px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.history-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 14px 10px;
-  border-bottom: 1px solid #f0f0f0;
-}
-
-.history-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #333;
-}
-
-.history-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 6px;
-}
-
-.history-item {
-  padding: 10px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.15s;
-  margin-bottom: 2px;
-}
-
-.history-item:hover {
-  background: #f5f7fa;
-}
-
-.history-item.active {
-  background: #e8f5e9;
-}
-
-.conv-title {
-  font-size: 13px;
-  color: #333;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.conv-time {
-  font-size: 11px;
-  color: #999;
-  margin-top: 3px;
-}
-
-.history-empty {
-  text-align: center;
-  color: #ccc;
-  font-size: 13px;
-  padding: 32px 0;
-}
-
-/* 响应式 */
-@media (max-width: 1100px) {
-  .history-panel {
-    display: none;
-  }
-}
-
-@media (max-width: 900px) {
-  .chat-layout {
-    flex-direction: column;
-  }
-  .avatar-panel {
-    width: 100%;
-    height: 300px;
-    min-width: unset;
-  }
-}
+.chat-view { width: 100%; height: calc(100vh - 60px); padding: 12px; display: flex; flex-direction: column; }
+.chat-layout { flex: 1; display: flex; gap: 12px; min-height: 0; }
+.avatar-panel { width: 360px; min-width: 280px; display: flex; flex-direction: column; background: linear-gradient(180deg, #e8f4f8 0%, #d4e9d7 40%, #f0ebe3 100%); border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+.live2d-wrapper { flex: 1; min-height: 0; }
+.chat-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.connection-hint { display: flex; align-items: center; gap: 8px; padding: 6px 14px; background: #fdf6ec; border-radius: 6px; color: #e6a23c; font-size: 12px; flex-shrink: 0; }
+.connection-hint .dot { width: 6px; height: 6px; border-radius: 50%; background: #e6a23c; animation: blink 1.5s ease-in-out infinite; }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.chat-container { flex: 1; display: flex; flex-direction: column; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); overflow: hidden; min-height: 0; }
+.interest-tags { padding: 20px; border-bottom: 1px solid #f0f0f0; flex-shrink: 0; }
+.tags-title { font-size: 14px; color: #606266; margin-bottom: 12px; }
+.tags-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.interest-tag { cursor: pointer; font-size: 13px; padding: 8px 16px; border-radius: 20px; transition: all 0.2s; }
+.interest-tag:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+.history-panel { width: 240px; min-width: 220px; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); display: flex; flex-direction: column; overflow: hidden; }
+.history-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 10px; border-bottom: 1px solid #f0f0f0; }
+.history-title { font-size: 14px; font-weight: 600; color: #333; }
+.history-list { flex: 1; overflow-y: auto; padding: 6px; }
+.history-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: background 0.15s; margin-bottom: 2px; }
+.history-item:hover { background: #f5f7fa; }
+.history-item:hover .conv-actions { opacity: 1; }
+.history-item.active { background: #e8f5e9; border-left: 3px solid #5a8a6a; }
+.conv-title { font-size: 13px; color: #333; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+.conv-time { font-size: 11px; color: #999; }
+.conv-actions { display: flex; gap: 6px; opacity: 0; transition: opacity 0.15s; }
+.action-icon { font-size: 13px; color: #999; cursor: pointer; padding: 2px; border-radius: 4px; transition: all 0.15s; }
+.action-icon:hover { color: #5a8a6a; background: rgba(90,138,106,0.1); }
+.action-icon.danger:hover { color: #e05050; background: rgba(224,80,80,0.1); }
+.rename-input { width: 100%; border: 1px solid #5a8a6a; border-radius: 4px; padding: 4px 8px; font-size: 13px; outline: none; font-family: inherit; }
+.history-empty { text-align: center; color: #ccc; font-size: 13px; padding: 32px 0; }
+@media (max-width: 1100px) { .history-panel { display: none; } }
+@media (max-width: 900px) { .chat-layout { flex-direction: column; } .avatar-panel { width: 100%; height: 300px; min-width: unset; } }
 </style>

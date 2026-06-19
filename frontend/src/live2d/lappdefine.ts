@@ -2,7 +2,7 @@ import { LogLevel } from '@framework/live2dcubismframework'
 
 // 模型配置
 export const ResourcesPath = '/models/'
-export const ModelDir: string[] = ['white']
+export const ModelDir: string[] = ['aniya']
 export const ModelDirSize = ModelDir.length
 
 // Shader 路径
@@ -65,6 +65,4 @@ export const ExpressionMap: Record<string, string> = {
   side: 'SideMouth',
   sidemouth: 'SideMouth',
   pokeface: 'PokeFace',
-  mic: 'Mic',
-  controller: 'Controller',
 }

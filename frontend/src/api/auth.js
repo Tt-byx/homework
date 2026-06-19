@@ -19,3 +19,11 @@ export function getConversations() {
 export function getConversationMessages(id) {
   return request.get(`/api/conversations/${id}/messages`)
 }
+
+export function deleteConversation(id) {
+  return request.delete(`/api/conversations/${id}`)
+}
+
+export function renameConversation(id, title) {
+  return request.put(`/api/conversations/${id}/title`, { title })
+}

@@ -121,15 +121,139 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     }
 
     /**
-     * 处理文字对话：调 Python /api/chat (JSON)，转发给前端
+     * 流式读取 SSE 响应，逐行解析并转发给前端
+     * @return done 事件中的 total_text（AI 完整回复），用于保存数据库
+     */
+    private String streamPythonSSE(WebSocketSession session, String endpoint,
+                                    Map<String, String> formFields, String fileFieldName,
+                                    byte[] fileData, String fileFilename) {
+        String totalText = "";
+        java.net.HttpURLConnection conn = null;
+        String boundary = "----WebKitFormBoundary" + System.currentTimeMillis();
+        try {
+            java.net.URL url = new java.net.URL(pythonBackendUrl + endpoint);
+            conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(120000);
+            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+            conn.setChunkedStreamingMode(8192);
+
+            // 构建 multipart body
+            try (var os = conn.getOutputStream();
+                 var writer = new java.io.OutputStreamWriter(os, java.nio.charset.StandardCharsets.UTF_8)) {
+
+                // 写入普通表单字段
+                for (Map.Entry<String, String> entry : formFields.entrySet()) {
+                    if (entry.getValue() == null) continue;
+                    writer.write("--" + boundary + "\r\n");
+                    writer.write("Content-Disposition: form-data; name=\"" + entry.getKey() + "\"\r\n\r\n");
+                    writer.write(entry.getValue() + "\r\n");
+                    writer.flush();
+                }
+
+                // 写入文件字段
+                if (fileData != null && fileData.length > 0 && fileFieldName != null) {
+                    writer.write("--" + boundary + "\r\n");
+                    writer.write("Content-Disposition: form-data; name=\"" + fileFieldName
+                            + "\"; filename=\"" + (fileFilename != null ? fileFilename : "audio.webm") + "\"\r\n");
+                    writer.write("Content-Type: application/octet-stream\r\n\r\n");
+                    writer.flush();
+                    os.write(fileData);
+                    os.write("\r\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    writer.flush();
+                }
+
+                writer.write("--" + boundary + "--\r\n");
+                writer.flush();
+            }
+
+            // 检查响应状态码
+            int responseCode = conn.getResponseCode();
+            java.io.InputStream responseStream;
+            if (responseCode >= 400) {
+                responseStream = conn.getErrorStream();
+                if (responseStream != null) {
+                    String errorBody = new String(responseStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                    log.error("Python 返回错误 {}: {}", responseCode, errorBody);
+                    trySendToClient(session, WebSocketMessage.error("AI 服务错误: " + responseCode));
+                }
+                return totalText;
+            }
+
+            // 流式读取 SSE 响应
+            try (var reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                String currentEvent = "";
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    if (line.startsWith("event: ")) {
+                        currentEvent = line.substring(7).trim();
+                    } else if (line.startsWith("data: ")) {
+                        String data = line.substring(6).trim();
+                        try {
+                            switch (currentEvent) {
+                                case "text_chunk":
+                                    Map<String, Object> textData = objectMapper.readValue(data, Map.class);
+                                    sendToClient(session, WebSocketMessage.textChunk((String) textData.get("text")));
+                                    break;
+                                case "audio_chunk":
+                                    Map<String, Object> audioData = objectMapper.readValue(data, Map.class);
+                                    sendToClient(session, WebSocketMessage.audioChunk(
+                                            (String) audioData.get("audio"),
+                                            (String) audioData.get("format")
+                                    ));
+                                    break;
+                                case "asr_result":
+                                    Map<String, Object> asrData = objectMapper.readValue(data, Map.class);
+                                    sendToClient(session, WebSocketMessage.asrResult((String) asrData.get("text")));
+                                    break;
+                                case "done":
+                                    Map<String, Object> doneData = objectMapper.readValue(data, Map.class);
+                                    totalText = (String) doneData.getOrDefault("total_text", "");
+                                    sendToClient(session, WebSocketMessage.done(
+                                            (String) doneData.get("session_id"),
+                                            totalText
+                                    ));
+                                    break;
+                                case "error":
+                                    Map<String, Object> errData = objectMapper.readValue(data, Map.class);
+                                    sendToClient(session, WebSocketMessage.error((String) errData.get("message")));
+                                    break;
+                                case "expression":
+                                    Map<String, Object> exprData = objectMapper.readValue(data, Map.class);
+                                    sendToClient(session, WebSocketMessage.expression((String) exprData.get("expression")));
+                                    break;
+                            }
+                        } catch (Exception e) {
+                            log.error("解析 SSE 数据失败: {}", data, e);
+                        }
+                    }
+                }
+            }
+        } catch (java.net.SocketTimeoutException e) {
+            log.error("Python SSE 流读取超时: {}", e.getMessage());
+            trySendToClient(session, WebSocketMessage.error("AI 服务响应超时"));
+        } catch (Exception e) {
+            log.error("Python SSE 流读取失败: {}", e.getMessage(), e);
+            trySendToClient(session, WebSocketMessage.error("AI 服务暂时不可用"));
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+        return totalText;
+    }
+
+    /**
+     * 处理文字对话：调 Python /api/chat/stream (multipart)，流式转发给前端
      */
     private void handleTextChat(WebSocketSession session, WebSocketMessage msg) {
         log.info("handleTextChat 开始处理: {}", msg.getContent().length() > 30
                 ? msg.getContent().substring(0, 30) + "..." : msg.getContent());
         CompletableFuture.runAsync(() -> {
             try {
-                log.info("[Step 1] 开始保存会话到数据库");
-
                 // 1. 保存会话和用户消息到数据库
                 String sessionId = msg.getSessionId();
                 Long conversationId = null;
@@ -147,9 +271,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                 if (conversationId == null) {
                     Conversation newConv = new Conversation();
                     newConv.setSessionId(sessionId != null ? sessionId : java.util.UUID.randomUUID().toString());
-                    String title = msg.getContent();
-                    newConv.setTitle(title.substring(0, Math.min(20, title.length())));
-                    // 关联用户
+                    newConv.setTitle(generateTitle(msg.getContent()));
                     Object userIdObj = session.getAttributes().get("userId");
                     if (userIdObj instanceof Long) {
                         newConv.setUserId((Long) userIdObj);
@@ -162,8 +284,6 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                     sessionId = newConv.getSessionId();
                 }
 
-                log.info("[Step 2] 会话已保存, conversationId={}, 开始保存用户消息", conversationId);
-
                 ChatMessage userMsg = new ChatMessage();
                 userMsg.setConversationId(conversationId);
                 userMsg.setRole("user");
@@ -172,68 +292,23 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                 userMsg.setCreatedAt(java.time.LocalDateTime.now());
                 chatMessageMapper.insert(userMsg);
 
-                log.info("[Step 3] 用户消息已保存, 开始调用 Python");
+                // 2. 构建表单字段，流式调 Python /api/chat/stream
+                Map<String, String> formFields = new java.util.LinkedHashMap<>();
+                formFields.put("message", msg.getContent());
+                formFields.put("session_id", sessionId != null ? sessionId : "");
 
-                // 2. JSON POST 调 Python /api/chat
-                Map<String, Object> requestBody = new java.util.HashMap<>();
-                requestBody.put("message", msg.getContent());
-                requestBody.put("session_id", sessionId);
+                // 流式读取 SSE，边收边转发给前端，返回 AI 完整回复
+                String aiReply = streamPythonSSE(session, "/api/chat/stream", formFields, null, null, null);
 
-                HttpHeaders headers = new HttpHeaders();
-                headers.setContentType(MediaType.APPLICATION_JSON);
-                HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
-
-                log.info("[Step 4] 正在调用 Python: {}/api/chat", pythonBackendUrl);
-
-                ResponseEntity<Map> response = restTemplate.exchange(
-                        pythonBackendUrl + "/api/chat",
-                        HttpMethod.POST,
-                        entity,
-                        Map.class
-                );
-
-                log.info("[Step 5] Python 返回状态: {}", response.getStatusCode());
-
-                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                    Map<String, Object> result = response.getBody();
-                    String reply = (String) result.get("reply");
-                    String replySessionId = (String) result.get("session_id");
-                    String audio = (String) result.get("audio");
-                    String expr = (String) result.get("expression");
-
-                    // 3. 保存 AI 回复到数据库
+                // 3. 保存 AI 回复到数据库
+                if (aiReply != null && !aiReply.isEmpty()) {
                     ChatMessage aiMsg = new ChatMessage();
                     aiMsg.setConversationId(conversationId);
                     aiMsg.setRole("assistant");
-                    aiMsg.setContent(reply);
-                    aiMsg.setSentiment(SentimentAnalyzer.analyze(reply));
+                    aiMsg.setContent(aiReply);
+                    aiMsg.setSentiment(SentimentAnalyzer.analyze(aiReply));
                     aiMsg.setCreatedAt(java.time.LocalDateTime.now());
                     chatMessageMapper.insert(aiMsg);
-
-                    // 发送表情
-                    if (expr != null && !expr.isEmpty()) {
-                        sendToClient(session, WebSocketMessage.expression(expr));
-                    }
-
-                    // 发送文字
-                    sendToClient(session, WebSocketMessage.textChunk(reply));
-
-                    // 发送音频（逗号分隔的 base64 列表）
-                    if (audio != null && !audio.isEmpty()) {
-                        String[] audioParts = audio.split(",");
-                        for (String part : audioParts) {
-                            if (!part.isEmpty()) {
-                                sendToClient(session, WebSocketMessage.audioChunk(part.trim(), "wav"));
-                            }
-                        }
-                    }
-
-                    // 发送完成标记
-                    sendToClient(session, WebSocketMessage.done(replySessionId, reply));
-                    log.info("[Step 6] 回复已发送给前端, reply长度={}", reply != null ? reply.length() : 0);
-                } else {
-                    log.error("[ERROR] Python 返回错误: {}", response.getStatusCode());
-                    trySendToClient(session, WebSocketMessage.error("AI服务返回错误"));
                 }
 
             } catch (Exception e) {
@@ -251,7 +326,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     }
 
     /**
-     * 处理音频对话：用 RestTemplate 转发音频到 Python /api/chat/stream
+     * 处理音频对话：流式调 Python /api/chat/stream
      */
     private void proxyAudioToPython(WebSocketSession session, byte[] audioData) {
         try {
@@ -259,95 +334,17 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             String rawFormat = pendingAudioFormat.remove(session.getId());
             final String audioFormat = rawFormat != null ? rawFormat : "webm";
 
-            // 构建 multipart 请求
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.MULTIPART_FORM_DATA);
-
-            org.springframework.util.LinkedMultiValueMap<String, Object> body = new org.springframework.util.LinkedMultiValueMap<>();
-            body.add("audio", new org.springframework.core.io.ByteArrayResource(audioData) {
-                @Override
-                public String getFilename() {
-                    return "audio." + audioFormat;
-                }
-            });
+            Map<String, String> formFields = new java.util.LinkedHashMap<>();
             if (sessionId != null) {
-                body.add("session_id", sessionId);
+                formFields.put("session_id", sessionId);
             }
 
-            HttpEntity<org.springframework.util.LinkedMultiValueMap<String, Object>> entity = new HttpEntity<>(body, headers);
-
-            log.info("转发音频到 Python: {} bytes, format={}", audioData.length, audioFormat);
-
-            ResponseEntity<String> response = restTemplate.exchange(
-                    pythonBackendUrl + "/api/chat/stream",
-                    HttpMethod.POST,
-                    entity,
-                    String.class
-            );
-
-            if (response.getBody() != null) {
-                processSSEResponse(session, response.getBody());
-            } else {
-                trySendToClient(session, WebSocketMessage.error("语音处理返回空"));
-            }
+            // 流式读取 SSE，边收边转发
+            streamPythonSSE(session, "/api/chat/stream", formFields, "audio", audioData, "audio." + audioFormat);
 
         } catch (Exception e) {
             log.error("转发音频到 Python 失败: {}", e.getMessage(), e);
             trySendToClient(session, WebSocketMessage.error("语音处理失败"));
-        }
-    }
-
-    /**
-     * 解析 SSE 响应并转发给前端客户端
-     */
-    private void processSSEResponse(WebSocketSession session, String sseBody) {
-        String[] lines = sseBody.split("\n");
-        String currentEvent = "";
-
-        for (String line : lines) {
-            line = line.trim();
-            if (line.startsWith("event: ")) {
-                currentEvent = line.substring(7).trim();
-            } else if (line.startsWith("data: ")) {
-                String data = line.substring(6).trim();
-                try {
-                    // 根据事件类型转发
-                    switch (currentEvent) {
-                        case "text_chunk":
-                            Map<String, Object> textData = objectMapper.readValue(data, Map.class);
-                            sendToClient(session, WebSocketMessage.textChunk((String) textData.get("text")));
-                            break;
-                        case "audio_chunk":
-                            Map<String, Object> audioData = objectMapper.readValue(data, Map.class);
-                            sendToClient(session, WebSocketMessage.audioChunk(
-                                    (String) audioData.get("audio"),
-                                    (String) audioData.get("format")
-                            ));
-                            break;
-                        case "asr_result":
-                            Map<String, Object> asrData = objectMapper.readValue(data, Map.class);
-                            sendToClient(session, WebSocketMessage.asrResult((String) asrData.get("text")));
-                            break;
-                        case "done":
-                            Map<String, Object> doneData = objectMapper.readValue(data, Map.class);
-                            sendToClient(session, WebSocketMessage.done(
-                                    (String) doneData.get("session_id"),
-                                    (String) doneData.get("total_text")
-                            ));
-                            break;
-                        case "error":
-                            Map<String, Object> errData = objectMapper.readValue(data, Map.class);
-                            sendToClient(session, WebSocketMessage.error((String) errData.get("message")));
-                            break;
-                        case "expression":
-                            Map<String, Object> exprData = objectMapper.readValue(data, Map.class);
-                            sendToClient(session, WebSocketMessage.expression((String) exprData.get("expression")));
-                            break;
-                    }
-                } catch (Exception e) {
-                    log.error("解析 SSE 数据失败: {}", data, e);
-                }
-            }
         }
     }
 
@@ -376,5 +373,17 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         } catch (Exception e) {
             log.error("发送消息异常: {}", e.getMessage());
         }
+    }
+
+    /**
+     * 从用户消息生成对话标题（10-20字）
+     */
+    private String generateTitle(String content) {
+        if (content == null || content.isEmpty()) return "新对话";
+        // 去除空白和标点
+        String clean = content.replaceAll("[\\s\\n\\r]+", "").trim();
+        if (clean.length() <= 16) return clean;
+        // 截取前16字 + 省略号
+        return clean.substring(0, 16) + "...";
     }
 }

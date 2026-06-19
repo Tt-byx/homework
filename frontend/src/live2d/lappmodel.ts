@@ -285,12 +285,14 @@ export class LAppModel extends CubismUserModel {
       )
     }
 
-    // LipSync — manually bind ParamMouthOpenY since model3.json has empty LipSync Ids
+    // LipSync — bind mouth parameters
     if (this._lipSyncIds.length === 0) {
       const mouthOpenId = CubismFramework.getIdManager().getId('ParamMouthOpenY')
       const mouthFormId = CubismFramework.getIdManager().getId('ParamMouthForm')
+      const mouthXId = CubismFramework.getIdManager().getId('Param83') // ANIYA mouthX
       if (mouthOpenId) this._lipSyncIds.push(mouthOpenId)
       if (mouthFormId) this._lipSyncIds.push(mouthFormId)
+      if (mouthXId) this._lipSyncIds.push(mouthXId)
     }
     this._updateScheduler.addUpdatableList(
       new CubismLipSyncUpdater(this._lipSyncIds, this._audioProvider)
@@ -384,6 +386,17 @@ export class LAppModel extends CubismUserModel {
   public setLipSyncValue(value: number): void {
     if (this._audioProvider) {
       this._audioProvider.setLipSyncValue(value)
+    }
+    if (this._model) {
+      const v = Math.max(0, Math.min(1, value))
+      // Param83 = ANIYA 的主嘴巴参数（mouthX）
+      this._model.setParameterValueById(
+        CubismFramework.getIdManager().getId('Param83'), v
+      )
+      // ParamMouthOpenY 也设（兼容其他模型）
+      this._model.setParameterValueById(
+        CubismFramework.getIdManager().getId('ParamMouthOpenY'), v
+      )
     }
   }
 

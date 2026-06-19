@@ -36,7 +36,7 @@ async def chat_with_mimo(message: str) -> str:
         max_tokens=2048,
     )
     msg = response.choices[0].message
-    return msg.content or msg.reasoning_content or ""
+    return msg.content or ""
 
 
 async def chat_with_rag(message: str) -> str:
@@ -53,7 +53,7 @@ async def chat_with_rag(message: str) -> str:
         max_tokens=2048,
     )
     msg = response.choices[0].message
-    return msg.content or msg.reasoning_content or ""
+    return msg.content or ""
 
 
 async def chat_stream(message: str, context_chunks: list[str] = None):
@@ -80,6 +80,7 @@ async def chat_stream(message: str, context_chunks: list[str] = None):
     async for chunk in response:
         if chunk.choices:
             delta = chunk.choices[0].delta
-            text = delta.content or delta.reasoning_content
+            # 只输出正式回答，跳过思考过程（reasoning_content）
+            text = delta.content
             if text:
                 yield text

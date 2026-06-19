@@ -18,6 +18,16 @@ export function useLive2D() {
     _delegate = LAppDelegate.getInstance()
     const ok = _delegate.initialize(canvas)
     isReady.value = ok
+
+    // 暴露全局测试函数（浏览器控制台调用）
+    if (ok) {
+      (window as any).__testMouth = (v: number) => {
+        const model = _delegate?.getModel()
+        console.log('[TEST] setLipSync', v, 'delegate:', !!_delegate, 'model:', !!model)
+        setLipSync(v)
+      }
+    }
+
     return ok
   }
 
