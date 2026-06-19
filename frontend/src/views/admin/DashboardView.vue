@@ -2,12 +2,14 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import { getOverview, getSentiment, getTrends, getConversations, getTopQuestions } from '@/api/dashboard'
+import { getFeedbackStats } from '@/api/analytics'
 
 const overview = ref({ todaySessions: 0, todayMessages: 0, totalSessions: 0, totalMessages: 0 })
 const sentimentData = ref([])
 const trendData = ref({ sessions: [], messages: [] })
 const conversations = ref([])
 const topQuestions = ref([])
+const feedbackStats = ref({ likes: 0, dislikes: 0, total: 0, satisfactionRate: 0 })
 
 let sentimentChart = null
 let trendChart = null
@@ -25,14 +27,16 @@ const statCards = [
 
 async function fetchData() {
   try {
-    const [ov, sent, trend, conv, top] = await Promise.all([
+    const [ov, sent, trend, conv, top, fb] = await Promise.all([
       getOverview(), getSentiment(), getTrends(), getConversations(), getTopQuestions(),
+      getFeedbackStats().catch(() => ({ likes: 0, dislikes: 0, total: 0, satisfactionRate: 0 })),
     ])
     overview.value = ov || overview.value
     sentimentData.value = sent?.distribution || []
     trendData.value = trend || trendData.value
     conversations.value = conv?.conversations || []
     topQuestions.value = top?.questions || []
+    feedbackStats.value = fb || feedbackStats.value
     renderCharts()
   } catch (e) {
     console.error('获取数据大屏数据失败:', e)
@@ -149,6 +153,28 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- Feedback stats -->
+    <div class="panel feedback-panel" v-if="feedbackStats.total > 0">
+      <div class="panel-head">用户反馈</div>
+      <div class="feedback-grid">
+        <div class="fb-item">
+          <span class="fb-icon">👍</span>
+          <span class="fb-count">{{ feedbackStats.likes }}</span>
+          <span class="fb-label">点赞</span>
+        </div>
+        <div class="fb-item">
+          <span class="fb-icon">👎</span>
+          <span class="fb-count">{{ feedbackStats.dislikes }}</span>
+          <span class="fb-label">点踩</span>
+        </div>
+        <div class="fb-item fb-satisfaction">
+          <span class="fb-icon">😊</span>
+          <span class="fb-count">{{ feedbackStats.satisfactionRate }}%</span>
+          <span class="fb-label">满意度</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Charts row -->
     <div class="charts-grid">
       <div class="panel">
@@ -250,6 +276,27 @@ onUnmounted(() => {
   color: var(--text-tertiary);
   margin-top: 4px;
 }
+
+/* ── Feedback ── */
+.feedback-panel { margin-top: 0; }
+.feedback-grid {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+}
+.fb-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 32px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  min-width: 120px;
+}
+.fb-icon { font-size: 28px; margin-bottom: 6px; }
+.fb-count { font-size: 24px; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.fb-label { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
+.fb-satisfaction { border-color: #5a8a6a; background: #e8f0eb; }
 
 /* ── Panels ── */
 .panel {

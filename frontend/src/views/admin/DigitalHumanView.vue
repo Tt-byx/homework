@@ -46,7 +46,7 @@ async function previewVoice() {
     const formData = new FormData()
     formData.append('text', sampleText)
     formData.append('voice', config.value.voice)
-    const response = await fetch('/api/tts', { method: 'POST', body: formData })
+    const response = await fetch('/py-api/tts', { method: 'POST', body: formData })
     if (!response.ok) throw new Error('TTS 失败')
     const blob = await response.blob()
     const audio = new Audio(URL.createObjectURL(blob))
