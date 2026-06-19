@@ -1,10 +1,25 @@
 ﻿<script setup>
-defineProps({
+import { ref } from 'vue'
+import { submitFeedback } from '@/api/analytics'
+
+const props = defineProps({
   message: {
     type: Object,
     required: true,
   },
 })
+
+const feedbackGiven = ref(null) // 'like' | 'dislike' | null
+
+async function giveFeedback(type) {
+  if (!props.message.id) return
+  try {
+    feedbackGiven.value = type
+    await submitFeedback(props.message.id, type)
+  } catch {
+    // ignore
+  }
+}
 
 function formatTime(timestamp) {
   if (!timestamp) return ''
@@ -36,6 +51,21 @@ function formatTime(timestamp) {
         <span class="text">{{ message.content }}</span>
       </div>
       <div class="time">{{ formatTime(message.timestamp) }}</div>
+      <!-- 反馈按钮：仅 AI 消息显示 -->
+      <div v-if="message.role === 'assistant' && !message.isError" class="feedback-bar">
+        <button
+          class="fb-btn"
+          :class="{ active: feedbackGiven === 'like' }"
+          @click="giveFeedback('like')"
+          title="有帮助"
+        >👍</button>
+        <button
+          class="fb-btn"
+          :class="{ active: feedbackGiven === 'dislike' }"
+          @click="giveFeedback('dislike')"
+          title="没帮助"
+        >👎</button>
+      </div>
     </div>
   </div>
 </template>
@@ -102,5 +132,47 @@ function formatTime(timestamp) {
   font-size: 12px;
   color: #909399;
   margin-top: 4px;
+}
+
+.feedback-bar {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.chat-message.assistant:hover .feedback-bar,
+.feedback-bar .active ~ .feedback-bar,
+.fb-btn.active {
+  opacity: 1;
+}
+
+.chat-message:hover .feedback-bar {
+  opacity: 1;
+}
+
+.fb-btn {
+  background: none;
+  border: 1px solid #e4e7ed;
+  border-radius: 14px;
+  padding: 2px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.6;
+  transition: all 0.15s;
+  opacity: 0.5;
+}
+
+.fb-btn:hover {
+  opacity: 1;
+  background: #f5f7fa;
+  border-color: #c0c4cc;
+}
+
+.fb-btn.active {
+  opacity: 1;
+  background: #e8f0eb;
+  border-color: #5a8a6a;
 }
 </style>

@@ -8,6 +8,7 @@ const isCollapse = ref(false)
 
 const menuItems = [
   { path: '/admin/dashboard', icon: 'DataLine', label: '数据总览' },
+  { path: '/admin/analytics', icon: 'TrendCharts', label: '消费分析' },
   { path: '/admin/knowledge', icon: 'FolderOpened', label: '知识库' },
   { path: '/admin/conversations', icon: 'ChatDotRound', label: '对话记录' },
 ]

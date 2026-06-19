@@ -46,6 +46,11 @@ const routes = [
         name: 'AdminConversations',
         component: () => import('@/views/admin/ConversationsView.vue'),
       },
+      {
+        path: 'analytics',
+        name: 'AdminAnalytics',
+        component: () => import('@/views/admin/AnalyticsView.vue'),
+      },
     ],
   },
 ]
