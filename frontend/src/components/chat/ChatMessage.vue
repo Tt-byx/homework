@@ -1,7 +1,7 @@
 ﻿<script setup>
-import { ref, inject, onUnmounted } from 'vue'
+import { ref, inject, computed } from 'vue'
 import { submitFeedback } from '@/api/analytics'
-import { synthesizeTTS } from '@/api/voice'
+import { useTtsStore } from '@/stores/tts'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps({
@@ -11,25 +11,23 @@ const props = defineProps({
   },
 })
 
+// Pinia store：全局单例，确保同一时间只有一条 TTS 在播放
+const ttsStore = useTtsStore()
+
 // 从 ChatView 注入的当前音色
 const currentVoice = inject('currentVoice', ref(''))
 
-// ── 全局单例：确保同一时间只有一条 TTS 在播放 ──
-// 模块级变量，所有 ChatMessage 实例共享
-let _globalTtsAudio = null
-let _globalTtsStopCb = null
+// 消息唯一标识：内容前 80 字 + 时间戳
+const msgKey = computed(() =>
+  `${(props.message.content || '').slice(0, 80)}_${props.message.timestamp || ''}`
+)
 
-function stopCurrentTTS() {
-  if (_globalTtsAudio) {
-    _globalTtsAudio.pause()
-    _globalTtsAudio.onended = null
-    _globalTtsAudio.onerror = null
-    _globalTtsAudio = null
-  }
-  if (_globalTtsStopCb) {
-    _globalTtsStopCb()
-    _globalTtsStopCb = null
-  }
+// 是否正在播放（响应式）
+const playing = computed(() => ttsStore.isPlaying(msgKey.value))
+
+// 播放/重新播放
+async function playTTS() {
+  await ttsStore.play(props.message.content, currentVoice.value, msgKey.value)
 }
 
 const feedbackGiven = ref(null)
@@ -55,56 +53,6 @@ function formatTime(timestamp) {
   if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`
   if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`
   return date.toLocaleDateString()
-}
-
-const playing = ref(false)
-
-// 组件销毁时，如果正在播放则停止
-onUnmounted(() => {
-  if (playing.value) stopCurrentTTS()
-})
-
-async function playTTS() {
-  // 如果当前这条消息正在播放 → 从头重播
-  if (playing.value) {
-    stopCurrentTTS()
-  } else {
-    // 停止其他消息的播放
-    stopCurrentTTS()
-  }
-
-  try {
-    playing.value = true
-    const blob = await synthesizeTTS(props.message.content, currentVoice.value)
-    const url = URL.createObjectURL(blob)
-    const audio = new Audio(url)
-
-    // 注册为全局播放器
-    _globalTtsAudio = audio
-    _globalTtsStopCb = () => {
-      playing.value = false
-      URL.revokeObjectURL(url)
-    }
-
-    audio.onended = () => {
-      _globalTtsAudio = null
-      _globalTtsStopCb = null
-      playing.value = false
-      URL.revokeObjectURL(url)
-    }
-    audio.onerror = () => {
-      _globalTtsAudio = null
-      _globalTtsStopCb = null
-      playing.value = false
-      URL.revokeObjectURL(url)
-    }
-    audio.play()
-  } catch {
-    playing.value = false
-    _globalTtsAudio = null
-    _globalTtsStopCb = null
-    ElMessage.warning('语音合成失败')
-  }
 }
 </script>
 
