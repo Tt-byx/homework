@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted, watch, provide } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
-import { getConversations, getConversationMessages, deleteConversation, renameConversation } from '@/api/auth'
+import { getConversations, getConversationMessages, deleteConversation, renameConversation, searchConversations } from '@/api/auth'
 import { getVoices, setVoice } from '@/api/voice'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import MessageList from '@/components/chat/MessageList.vue'
@@ -44,6 +44,51 @@ const conversations = ref([])
 const activeConvId = ref(null)
 const editingId = ref(null)
 const editTitle = ref('')
+
+// ── 对话搜索 ──
+const searchKeyword = ref('')
+const searchDateRange = ref(null)
+const searchResults = ref(null) // null=未搜索，[] = 搜索无结果
+const isSearching = ref(false)
+let _searchTimer = null
+
+function doSearch() {
+  clearTimeout(_searchTimer)
+  _searchTimer = setTimeout(async () => {
+    const kw = searchKeyword.value.trim()
+    if (!kw && !searchDateRange.value) {
+      searchResults.value = null
+      return
+    }
+    isSearching.value = true
+    try {
+      const params = {}
+      if (kw) params.keyword = kw
+      if (searchDateRange.value && searchDateRange.value.length === 2) {
+        params.startDate = searchDateRange.value[0]
+        params.endDate = searchDateRange.value[1]
+      }
+      const data = await searchConversations(params)
+      searchResults.value = Array.isArray(data) ? data : []
+    } catch {
+      searchResults.value = []
+    } finally {
+      isSearching.value = false
+    }
+  }, 300)
+}
+
+function clearSearch() {
+  searchKeyword.value = ''
+  searchDateRange.value = null
+  searchResults.value = null
+}
+
+function highlightText(text, keyword) {
+  if (!text || !keyword) return text || ''
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return text.replace(new RegExp(escaped, 'gi'), match => `<mark>${match}</mark>`)
+}
 
 const interestTags = [
   { icon: '🏛️', label: '历史文化', prompt: '我对历史文化感兴趣，请推荐一条游览路线', type: '' },
@@ -99,6 +144,13 @@ async function switchConversation(conv) {
     }
     chatStore.sessionId = conv.sessionId
   } catch { ElMessage.error('加载对话失败') }
+}
+
+function switchToSearchResult(item) {
+  searchResults.value = null
+  searchKeyword.value = ''
+  searchDateRange.value = null
+  switchConversation({ id: item.id, sessionId: item.sessionId })
 }
 
 function newConversation() {
@@ -280,7 +332,53 @@ onUnmounted(() => {
             <el-icon><Plus /></el-icon> 新对话
           </el-button>
         </div>
-        <div class="history-list">
+
+        <!-- 搜索区域 -->
+        <div class="search-section">
+          <el-input
+            v-model="searchKeyword"
+            placeholder="搜索对话..."
+            size="small"
+            clearable
+            @input="doSearch"
+            @clear="clearSearch"
+          >
+            <template #prefix><el-icon><Search /></el-icon></template>
+          </el-input>
+          <el-date-picker
+            v-model="searchDateRange"
+            type="daterange"
+            range-separator="~"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            size="small"
+            format="YYYY-MM-DD"
+            value-format="YYYY-MM-DD"
+            :teleported="false"
+            @change="doSearch"
+            @clear="doSearch"
+            style="width: 100%; margin-top: 6px;"
+          />
+        </div>
+
+        <!-- 搜索结果列表 -->
+        <div v-if="searchResults !== null" class="history-list">
+          <div v-if="searchResults.length === 0" class="history-empty">
+            {{ isSearching ? '搜索中...' : '未找到匹配的对话' }}
+          </div>
+          <div v-for="item in searchResults" :key="item.id"
+            class="history-item" :class="{ active: activeConvId === item.id }"
+            @click="switchToSearchResult(item)">
+            <div class="conv-title" v-html="highlightText(item.title || '新对话', searchKeyword)"></div>
+            <div v-if="item.matchedSnippet" class="conv-snippet" v-html="highlightText(item.matchedSnippet, searchKeyword)"></div>
+            <div class="conv-meta">
+              <span class="conv-time">{{ formatTime(item.updatedAt) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 正常对话列表 -->
+        <div v-else class="history-list">
           <div v-for="conv in conversations" :key="conv.id"
             class="history-item" :class="{ active: activeConvId === conv.id }"
             @click="switchConversation(conv)">
@@ -343,6 +441,10 @@ onUnmounted(() => {
 .action-icon.danger:hover { color: #e05050; background: rgba(224,80,80,0.1); }
 .rename-input { width: 100%; border: 1px solid #5a8a6a; border-radius: 4px; padding: 4px 8px; font-size: 13px; outline: none; font-family: inherit; }
 .history-empty { text-align: center; color: #ccc; font-size: 13px; padding: 32px 0; }
+.search-section { padding: 8px 10px; border-bottom: 1px solid #f0f0f0; flex-shrink: 0; }
+.search-section :deep(.el-date-editor) { --el-date-editor-width: 100%; }
+.conv-snippet { font-size: 11px; color: #999; margin-top: 3px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.conv-snippet :deep(mark), .conv-title :deep(mark) { background: #fef08a; color: #333; padding: 0 1px; border-radius: 2px; }
 @media (max-width: 1100px) { .history-panel { display: none; } }
 @media (max-width: 900px) { .chat-layout { flex-direction: column; } .avatar-panel { width: 100%; height: 300px; min-width: unset; } }
 </style>

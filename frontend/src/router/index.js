@@ -58,6 +58,11 @@ const routes = [
         component: () => import('@/views/admin/AnalyticsView.vue'),
       },
       {
+        path: 'visitor-profiles',
+        name: 'AdminVisitorProfiles',
+        component: () => import('@/views/admin/VisitorProfilesView.vue'),
+      },
+      {
         path: 'digital-human',
         name: 'AdminDigitalHuman',
         component: () => import('@/views/admin/DigitalHumanView.vue'),

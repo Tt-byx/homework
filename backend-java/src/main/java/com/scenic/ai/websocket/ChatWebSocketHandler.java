@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.scenic.ai.controller.AuthController;
 import com.scenic.ai.entity.ChatMessage;
 import com.scenic.ai.entity.Conversation;
+import com.scenic.ai.entity.VisitorProfileTag;
 import com.scenic.ai.mapper.ChatMessageMapper;
 import com.scenic.ai.mapper.ConversationMapper;
+import com.scenic.ai.mapper.VisitorProfileTagMapper;
 import com.scenic.ai.util.SentimentAnalyzer;
+import com.scenic.ai.util.TagExtractor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,6 +44,9 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     @Autowired
     private ChatMessageMapper chatMessageMapper;
+
+    @Autowired
+    private VisitorProfileTagMapper visitorProfileTagMapper;
 
     @Value("${python.backend.url:http://localhost:8000}")
     private String pythonBackendUrl;
@@ -311,6 +317,12 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                     chatMessageMapper.insert(aiMsg);
                 }
 
+                // 4. 提取用户兴趣标签（从用户消息中）
+                Long uid = (Long) session.getAttributes().get("userId");
+                if (uid != null) {
+                    extractAndUpdateTags(uid, msg.getContent());
+                }
+
             } catch (Exception e) {
                 log.error("[ERROR] 文字对话失败: {}", e.getMessage(), e);
                 trySendToClient(session, WebSocketMessage.error("AI服务暂时不可用: " + e.getMessage()));
@@ -345,6 +357,39 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         } catch (Exception e) {
             log.error("转发音频到 Python 失败: {}", e.getMessage(), e);
             trySendToClient(session, WebSocketMessage.error("语音处理失败"));
+        }
+    }
+
+    /**
+     * 从用户消息中提取兴趣标签并更新数据库
+     */
+    private void extractAndUpdateTags(Long userId, String userMessage) {
+        try {
+            Map<String, Integer> tags = TagExtractor.extractTags(userMessage);
+            for (Map.Entry<String, Integer> entry : tags.entrySet()) {
+                String tagName = entry.getKey();
+                int score = entry.getValue();
+                com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<VisitorProfileTag> wrapper =
+                        new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<VisitorProfileTag>()
+                                .eq(VisitorProfileTag::getUserId, userId)
+                                .eq(VisitorProfileTag::getTagName, tagName);
+                VisitorProfileTag existing = visitorProfileTagMapper.selectOne(wrapper);
+                if (existing != null) {
+                    existing.setTagScore(existing.getTagScore() + score);
+                    existing.setUpdatedAt(java.time.LocalDateTime.now());
+                    visitorProfileTagMapper.updateById(existing);
+                } else {
+                    VisitorProfileTag newTag = new VisitorProfileTag();
+                    newTag.setUserId(userId);
+                    newTag.setTagName(tagName);
+                    newTag.setTagScore(score);
+                    newTag.setCreatedAt(java.time.LocalDateTime.now());
+                    newTag.setUpdatedAt(java.time.LocalDateTime.now());
+                    visitorProfileTagMapper.insert(newTag);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("标签提取失败: {}", e.getMessage());
         }
     }
 

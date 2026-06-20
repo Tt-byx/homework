@@ -39,3 +39,8 @@ export function submitFeedback(messageId, type) {
 export function getFeedbackStats() {
   return request.get('/api/feedback/stats')
 }
+
+/** 游客画像列表 */
+export function getVisitorProfiles() {
+  return request.get('/api/visitor-profiles')
+}
