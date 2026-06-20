@@ -225,9 +225,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                                     break;
                                 case "expression":
                                     Map<String, Object> exprData = objectMapper.readValue(data, Map.class);
-                                    String exprValue = (String) exprData.get("expression");
-                                    log.info("SSE expression 事件: {}", exprValue);
-                                    sendToClient(session, WebSocketMessage.expression(exprValue));
+                                    sendToClient(session, WebSocketMessage.expression((String) exprData.get("expression")));
                                     break;
                             }
                         } catch (Exception e) {

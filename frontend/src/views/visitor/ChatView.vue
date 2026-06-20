@@ -160,41 +160,29 @@ let _expressionResetTimer = null
 // loading 状态变化：控制口型同步 + 表情重置
 watch(() => chatStore.loading, (loading) => {
   if (loading) {
-    // 新一轮对话开始：立即重置上轮残留表情
     if (_expressionResetTimer) { clearTimeout(_expressionResetTimer); _expressionResetTimer = null }
-    if (live2dRef.value) {
-      console.log('[ChatView] loading=true → 重置表情为 Normal')
-      live2dRef.value.setExpression('Normal')
-    }
+    live2dRef.value?.setExpression('Normal')
     chatStore.currentExpression = 'Normal'
   } else {
-    // 本轮对话结束：停止口型同步 + 安全定时器确保表情恢复
     live2dRef.value?.stopTextLipSync()
     live2dRef.value?.setLipSync(0)
     if (_expressionResetTimer) clearTimeout(_expressionResetTimer)
     _expressionResetTimer = setTimeout(() => {
       _expressionResetTimer = null
-      if (live2dRef.value) {
-        console.log('[ChatView] 2秒兜底 → 重置表情为 Normal')
-        live2dRef.value.setExpression('Normal')
-      }
+      live2dRef.value?.setExpression('Normal')
       chatStore.currentExpression = 'Normal'
     }, 2000)
   }
 })
 
 // ── 数字人表情驱动 ──
-// 直接回调：store 收到 expression 事件时立即调用，不经过 watcher
 function applyExpression(expr) {
   if (expr && live2dRef.value) {
-    console.log('[ChatView] 直接回调 → 设置表情:', expr)
     live2dRef.value.setExpression(expr)
   }
 }
 
-// watcher 兜底：防止直接回调遗漏
 watch(() => chatStore.currentExpression, (expr) => {
-  console.log('[ChatView] watcher 触发 → 表情:', expr)
   if (expr && live2dRef.value) {
     live2dRef.value.setExpression(expr)
   }
@@ -202,14 +190,7 @@ watch(() => chatStore.currentExpression, (expr) => {
 
 function onLive2DReady() {
   isLive2DReady.value = true
-  // 注册表情直接回调
   chatStore.setExpressionCallback(applyExpression)
-  console.log('[ChatView] Live2D 就绪，表情回调已注册')
-  // 浏览器控制台测试：__testExpression('Smile')
-  window.__testExpression = (expr) => {
-    console.log('[TEST] 手动设置表情:', expr, 'live2dRef:', !!live2dRef.value)
-    live2dRef.value?.setExpression(expr)
-  }
 }
 
 function formatTime(time) {

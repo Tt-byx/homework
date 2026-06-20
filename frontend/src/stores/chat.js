@@ -75,9 +75,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     chatWs.onExpression = (expression) => {
-      console.log('[ChatStore] 收到表情事件:', expression)
       currentExpression.value = expression
-      // 直接调用注册的回调（跳过 watcher 时序问题）
       if (_expressionCallback) {
         _expressionCallback(expression)
       }
