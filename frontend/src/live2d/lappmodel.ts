@@ -456,7 +456,14 @@ export class LAppModel extends CubismUserModel {
     if (!this._model) return
     const m = this._model
 
-    // 先隐藏所有特效部件
+    // 先重置所有身体参数到中立位，防止上一个表情的残留
+    m.setParameterValueById(this._idParamBodyAngleX, 0)
+    m.setParameterValueById(this._idParamBodyAngleY, 0)
+    m.setParameterValueById(this._idParamBodyAngleZ, 0)
+    m.setParameterValueById(this._idParamBodyAngleX2, 0)
+    m.setParameterValueById(this._idParamShoulderX, 0)
+
+    // 隐藏所有特效部件
     this._hideAllParts()
 
     switch (name.toLowerCase()) {
@@ -469,28 +476,28 @@ export class LAppModel extends CubismUserModel {
         m.addParameterValueById(this._idParamBodyAngleX, -1.5, 0)
         m.addParameterValueById(this._idParamShoulderX, 0.5, 0)
         m.addParameterValueById(this._idParamBodyAngleY, 0.5, 0)
-        this._setPartVisible('Part25', true) // 生气表情部件
+        this._setPartVisible('Part25', true)
         break
       case 'cry':
       case 'sad':
         m.addParameterValueById(this._idParamBodyAngleY, 1, 0)
         m.addParameterValueById(this._idParamBodyAngleX, 0.5, 0)
         m.addParameterValueById(this._idParamShoulderX, -0.3, 0)
-        this._setPartVisible('Part26', true) // 哭泣部件
-        this._setPartVisible('Part27', true) // 右眼泪
-        this._setPartVisible('Part28', true) // 左眼泪
+        this._setPartVisible('Part26', true)
+        this._setPartVisible('Part27', true)
+        this._setPartVisible('Part28', true)
         break
       case 'star':
       case 'surprise':
         m.addParameterValueById(this._idParamBodyAngleY, -1, 0)
         m.addParameterValueById(this._idParamBodyAngleX2, -0.5, 0)
-        this._setPartVisible('Part24', true) // 星星眼
+        this._setPartVisible('Part24', true)
         break
       case 'circle':
       case 'thinking':
         m.addParameterValueById(this._idParamBodyAngleZ, 0.5, 0)
         m.addParameterValueById(this._idParamBodyAngleX, 0.3, 0)
-        this._setPartVisible('Part174', true) // 圈圈眼
+        this._setPartVisible('Part174', true)
         break
       case 'pucker':
         m.addParameterValueById(this._idParamBodyAngleY, -0.3, 0)
@@ -504,14 +511,14 @@ export class LAppModel extends CubismUserModel {
         m.addParameterValueById(this._idParamShoulderX, 0.3, 0)
         break
       case 'pokeface':
-        this._setPartVisible('Part2', true) // 戳脸
+        this._setPartVisible('Part2', true)
         break
       case 'mic':
-        this._setPartVisible('Part4', true) // 拿话筒
+        this._setPartVisible('Part4', true)
         break
       case 'controller':
-        this._setPartVisible('Part6', true) // 拿手柄
-        this._setPartVisible('Part12', true) // 手柄道具
+        this._setPartVisible('Part6', true)
+        this._setPartVisible('Part12', true)
         break
       case 'normal':
         break
