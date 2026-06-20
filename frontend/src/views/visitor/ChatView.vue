@@ -1,8 +1,9 @@
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, provide } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useUserStore } from '@/stores/user'
 import { getConversations, getConversationMessages, deleteConversation, renameConversation } from '@/api/auth'
+import { getVoices, setVoice } from '@/api/voice'
 import ChatMessage from '@/components/chat/ChatMessage.vue'
 import MessageList from '@/components/chat/MessageList.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
@@ -13,6 +14,31 @@ const chatStore = useChatStore()
 const userStore = useUserStore()
 const live2dRef = ref(null)
 const isLive2DReady = ref(false)
+
+// 音色选择
+const voiceOptions = ref([])
+const currentVoice = ref('zh-CN-XiaoxiaoNeural')
+provide('currentVoice', currentVoice)
+
+async function loadVoices() {
+  try {
+    const data = await getVoices()
+    if (data?.voices) {
+      voiceOptions.value = data.voices
+      if (data.current) currentVoice.value = data.current
+    }
+  } catch { /* ignore */ }
+}
+
+async function handleVoiceChange(voiceId) {
+  currentVoice.value = voiceId
+  try {
+    await setVoice(voiceId)
+    ElMessage.success('音色已切换')
+  } catch {
+    ElMessage.warning('音色切换失败')
+  }
+}
 
 const conversations = ref([])
 const activeConvId = ref(null)
@@ -154,6 +180,7 @@ onMounted(async () => {
   chatStore.initWebSocket()
   await userStore.fetchMe()
   await loadLastConversation()
+  loadVoices()
 })
 
 onUnmounted(() => {
@@ -171,6 +198,24 @@ onUnmounted(() => {
       <div class="chat-panel">
         <div v-if="!chatStore.isWsConnected" class="connection-hint">
           <span class="dot"></span> 聊天服务未连接
+        </div>
+
+        <div class="chat-toolbar">
+          <span class="toolbar-label">🎙️ 音色</span>
+          <el-select
+            :model-value="currentVoice"
+            @change="handleVoiceChange"
+            size="small"
+            style="width: 160px"
+            :teleported="false"
+          >
+            <el-option
+              v-for="v in voiceOptions"
+              :key="v.id"
+              :label="`${v.name}（${v.gender}）`"
+              :value="v.id"
+            />
+          </el-select>
         </div>
 
         <div class="chat-container">
@@ -245,6 +290,8 @@ onUnmounted(() => {
 .connection-hint { display: flex; align-items: center; gap: 8px; padding: 6px 14px; background: #fdf6ec; border-radius: 6px; color: #e6a23c; font-size: 12px; flex-shrink: 0; }
 .connection-hint .dot { width: 6px; height: 6px; border-radius: 50%; background: #e6a23c; animation: blink 1.5s ease-in-out infinite; }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.chat-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); flex-shrink: 0; }
+.toolbar-label { font-size: 13px; color: #606266; white-space: nowrap; }
 .chat-container { flex: 1; display: flex; flex-direction: column; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); overflow: hidden; min-height: 0; }
 .interest-tags { padding: 20px; border-bottom: 1px solid #f0f0f0; flex-shrink: 0; }
 .tags-title { font-size: 14px; color: #606266; margin-bottom: 12px; }

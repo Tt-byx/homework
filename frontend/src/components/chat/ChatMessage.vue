@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { ref } from 'vue'
+import { ref, inject } from 'vue'
 import { submitFeedback } from '@/api/analytics'
 import { synthesizeTTS } from '@/api/voice'
 import { ElMessage } from 'element-plus'
@@ -11,10 +11,12 @@ const props = defineProps({
   },
 })
 
+// 从 ChatView 注入的当前音色
+const currentVoice = inject('currentVoice', ref(''))
+
 const feedbackGiven = ref(null)
 
 async function giveFeedback(type) {
-  // 用内容前50字作为标识（消息没有数据库ID）
   const msgId = props.message.id || Date.now()
   feedbackGiven.value = type
   ElMessage.success(type === 'like' ? '已点赞 👍' : '已点踩 👎')
@@ -41,14 +43,18 @@ const playing = ref(false)
 let currentAudio = null
 
 async function playTTS() {
-  if (playing.value) {
-    if (currentAudio) { currentAudio.pause(); currentAudio = null }
+  // 如果正在播放：停止当前音频，重新开始播放
+  if (playing.value && currentAudio) {
+    currentAudio.pause()
+    currentAudio.onended = null
+    currentAudio.onerror = null
+    currentAudio = null
     playing.value = false
-    return
   }
+
   try {
     playing.value = true
-    const blob = await synthesizeTTS(props.message.content)
+    const blob = await synthesizeTTS(props.message.content, currentVoice.value)
     const url = URL.createObjectURL(blob)
     currentAudio = new Audio(url)
     currentAudio.onended = () => { playing.value = false; currentAudio = null; URL.revokeObjectURL(url) }
@@ -56,6 +62,7 @@ async function playTTS() {
     currentAudio.play()
   } catch {
     playing.value = false
+    ElMessage.warning('语音合成失败')
   }
 }
 </script>
@@ -75,14 +82,14 @@ async function playTTS() {
         <!-- 语音消息标识 -->
         <span v-if="message.isVoice" class="voice-tag">🎤</span>
         <span class="text">{{ message.content }}</span>
-        <!-- ???? TTS ?? -->
+        <!-- TTS 语音播放按钮 -->
         <button
           v-if="message.role === 'assistant' && !message.isError && message.content"
           class="tts-play-btn"
           :class="{ playing: playing }"
           @click.stop="playTTS"
-          :title="playing ? '??' : '????'"
-        >{{ playing ? '?' : '??' }}</button>
+          :title="playing ? '重新播放' : '播放语音'"
+        >{{ playing ? '🔊' : '🔈' }}</button>
       </div>
       <div class="time">{{ formatTime(message.timestamp) }}</div>
       <!-- 反馈按钮：仅 AI 消息显示 -->
@@ -197,7 +204,7 @@ async function playTTS() {
   transform: scale(1.15);
 }
 
-/* TTS ???? */
+/* TTS 播放按钮 */
 .tts-play-btn {
   display: inline-flex;
   align-items: center;

@@ -14,9 +14,10 @@ export async function setVoice(voiceId) {
   return res.data;
 }
 
-export async function synthesizeTTS(text) {
+export async function synthesizeTTS(text, voice) {
   const form = new FormData();
   form.append("text", text);
+  if (voice) form.append("voice", voice);
   const res = await axios.post(`${BASE}/tts`, form, { responseType: "blob" });
   return res.data;
 }
