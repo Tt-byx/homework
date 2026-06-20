@@ -414,6 +414,9 @@ export class LAppModel extends CubismUserModel {
    * ���ñ���
    */
   public setExpressionByName(name: string): void {
+    // 先清空所有旧表情动画，防止残留面部参数
+    this._expressionManager.resetAll()
+
     const motion = this._expressions.get(name)
     if (motion) {
       this._expressionManager.startMotion(motion, false)

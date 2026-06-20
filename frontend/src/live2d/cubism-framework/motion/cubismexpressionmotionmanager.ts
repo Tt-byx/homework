@@ -53,6 +53,21 @@ export class CubismExpressionMotionManager extends CubismMotionQueueManager {
   }
 
   /**
+   * @brief すべての表情を即座にリセットする
+   * 表情切り替え時に前の表情の残留パラメータを防ぐ
+   */
+  public resetAll(): void {
+    // 既存のモーションをすべて削除
+    const motions = this.getCubismMotionQueueEntries();
+    for (let i = motions.length - 1; i >= 0; i--) {
+      motions.splice(i, 1);
+    }
+    this._fadeWeights.length = 0;
+    // 表情パラメータキャッシュをクリア
+    this._expressionParameterValues.length = 0;
+  }
+
+  /**
    * @brief 再生中のモーションのウェイトを取得する。
    *
    * @param[in]    index    表情のインデックス
