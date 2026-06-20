@@ -155,16 +155,24 @@ watch(() => chatStore.audioPlaying, (playing) => {
   }
 })
 
-// loading 结束后停止口型同步 + 2秒后恢复默认表情
+let _expressionResetTimer = null
+
+// loading 状态变化：控制口型同步 + 表情重置
 watch(() => chatStore.loading, (loading) => {
-  if (!loading) {
+  if (loading) {
+    // 新一轮对话开始：立即重置上轮残留表情
+    if (_expressionResetTimer) { clearTimeout(_expressionResetTimer); _expressionResetTimer = null }
+    live2dRef.value?.setExpression('Normal')
+    chatStore.currentExpression = 'Normal'
+  } else {
+    // 本轮对话结束：停止口型同步 + 安全定时器确保表情恢复
     live2dRef.value?.stopTextLipSync()
     live2dRef.value?.setLipSync(0)
-    setTimeout(() => {
-      if (live2dRef.value) {
-        live2dRef.value.setExpression('Normal')
-        chatStore.currentExpression = 'Normal'
-      }
+    if (_expressionResetTimer) clearTimeout(_expressionResetTimer)
+    _expressionResetTimer = setTimeout(() => {
+      _expressionResetTimer = null
+      live2dRef.value?.setExpression('Normal')
+      chatStore.currentExpression = 'Normal'
     }, 2000)
   }
 })

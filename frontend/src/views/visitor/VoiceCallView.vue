@@ -248,13 +248,16 @@ watch(() => chatStore.currentExpression, (expr) => {
   }
 })
 
-// 通话结束时恢复默认表情
+// 状态变化时控制表情：进入 processing 时重置，进入 idle 时恢复
 watch(() => callState.value, (state) => {
-  if (state === 'idle' && live2dRef.value) {
-    setTimeout(() => {
-      live2dRef.value?.setExpression('Normal')
-      chatStore.currentExpression = 'Normal'
-    }, 1000)
+  if (state === 'processing') {
+    // 新一轮对话开始：立即重置上轮残留表情
+    live2dRef.value?.setExpression('Normal')
+    chatStore.currentExpression = 'Normal'
+  } else if (state === 'idle') {
+    // 对话结束：恢复默认表情
+    live2dRef.value?.setExpression('Normal')
+    chatStore.currentExpression = 'Normal'
   }
 })
 
