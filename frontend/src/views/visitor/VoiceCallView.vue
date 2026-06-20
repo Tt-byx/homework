@@ -105,12 +105,41 @@ watch(() => chatStore.audioPlaying, (playing, oldPlaying) => {
   }
 })
 
+// 超时保护：processing 超过 20 秒提示错误
+let _processingTimer = null
+
 watch(() => chatStore.loading, (loading, oldLoading) => {
+  if (loading && callState.value === 'processing') {
+    // 启动超时计时器
+    if (_processingTimer) clearTimeout(_processingTimer)
+    _processingTimer = setTimeout(() => {
+      if (callState.value === 'processing') {
+        callState.value = 'idle'
+        statusText.value = 'AI 响应超时，请重试'
+        setTimeout(() => { statusText.value = '点击开始对话' }, 3000)
+      }
+    }, 20000)
+  }
+
   if (oldLoading && !loading && callState.value === 'processing') {
+    if (_processingTimer) { clearTimeout(_processingTimer); _processingTimer = null }
     callState.value = 'speaking'
     statusText.value = 'AI 正在回答...'
   }
 })
+
+// 错误监听：AI 报错时恢复 idle
+watch(() => chatStore.messages, (msgs) => {
+  if (msgs.length > 0) {
+    const last = msgs[msgs.length - 1]
+    if (last.isError && callState.value === 'processing') {
+      if (_processingTimer) { clearTimeout(_processingTimer); _processingTimer = null }
+      callState.value = 'idle'
+      statusText.value = 'AI 出错了，请重试'
+      setTimeout(() => { statusText.value = '点击开始对话' }, 3000)
+    }
+  }
+}, { deep: true })
 
 // 口型同步（复用 ChatView 的逻辑）
 watch(() => chatStore.audioPlaying, (playing) => {
@@ -135,6 +164,7 @@ watch(() => chatStore.audioPlaying, (playing) => {
 function endCall() {
   stopRecording()
   if (_mouthRAF) { cancelAnimationFrame(_mouthRAF); _mouthRAF = 0 }
+  if (_processingTimer) { clearTimeout(_processingTimer); _processingTimer = null }
   live2dRef.value?.setLipSync(0)
   chatStore.audioPlayer?.stop()
   callState.value = 'idle'
@@ -162,6 +192,7 @@ onMounted(async () => {
 onUnmounted(() => {
   stopRecording()
   if (_mouthRAF) { cancelAnimationFrame(_mouthRAF); _mouthRAF = 0 }
+  if (_processingTimer) { clearTimeout(_processingTimer); _processingTimer = null }
 })
 </script>
 
