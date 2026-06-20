@@ -75,7 +75,13 @@ export class AudioPlayer {
         }
       }
 
-      if (decodedBuffers.length === 0) return
+      if (decodedBuffers.length === 0) {
+        // 所有 chunk 解码失败，如果队列也空了则触发 onPlayEnd
+        if (this._playQueue.length === 0 && !this._isPlaying) {
+          this.onPlayEnd?.()
+        }
+        return
+      }
 
       // 拼接为一段连续音频，加入播放队列
       const merged = this._mergeAudioBuffers(decodedBuffers)

@@ -10,10 +10,10 @@ const chatStore = useChatStore()
 const userStore = useUserStore()
 const live2dRef = ref(null)
 
-// 通话状态: idle | listening | processing | speaking | connecting
+// 通话状态: connecting → idle → listening → processing → speaking
 const callState = ref('connecting')
 const statusText = ref('正在连接...')
-const isHolding = ref(false)
+const autoRecord = ref(false) // 播放完后自动录音
 
 // 录音
 let mediaRecorder = null
@@ -26,6 +26,10 @@ const volumeLevel = ref(0)
 // 口型同步
 let _mouthRAF = 0
 
+// speaking 兜底超时
+let _speakingTimer = null
+
+// ── 录音 ──
 async function startRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -48,25 +52,28 @@ async function startRecording() {
       cancelAnimationFrame(animFrame)
       volumeLevel.value = 0
 
-      if (audioChunks.length === 0) return
-
-      const blob = new Blob(audioChunks, { type: 'audio/webm' })
-      if (blob.size < 1000) {
-        // 太短，忽略
+      if (audioChunks.length === 0) {
         callState.value = 'idle'
         statusText.value = '点击开始对话'
         return
       }
 
+      const blob = new Blob(audioChunks, { type: 'audio/webm' })
+      if (blob.size < 1000) {
+        callState.value = 'idle'
+        statusText.value = '点击开始对话'
+        return
+      }
+
+      // 发送语音 → 进入 processing
       callState.value = 'processing'
       statusText.value = 'AI 思考中...'
       chatStore.sendVoiceMessage(blob, 'webm')
     }
 
-    mediaRecorder.start(100) // 每 100ms 收集一次
+    mediaRecorder.start(100)
     callState.value = 'listening'
     statusText.value = '正在聆听...'
-    isHolding.value = true
 
     // 音量可视化
     const dataArray = new Uint8Array(analyser.frequencyBinCount)
@@ -79,7 +86,6 @@ async function startRecording() {
       animFrame = requestAnimationFrame(tick)
     }
     animFrame = requestAnimationFrame(tick)
-
   } catch (e) {
     console.error('录音失败:', e)
     statusText.value = '麦克风权限被拒绝'
@@ -87,53 +93,55 @@ async function startRecording() {
 }
 
 function stopRecording() {
-  isHolding.value = false
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop()
   }
 }
 
-// 监听 AI 回复完成 → 自动恢复监听
+// ── 核心状态转移：loading 变为 false 时 ──
+// loading 为 false 有两种情况：
+//   A) onDone 正常结束 → 检查 audioPlaying
+//   B) 出错结束 → audioPlaying 为 false
+watch(() => chatStore.loading, (loading, oldLoading) => {
+  if (oldLoading && !loading && callState.value === 'processing') {
+    if (chatStore.audioPlaying) {
+      // 有音频在播放 → 进入 speaking
+      callState.value = 'speaking'
+      statusText.value = 'AI 正在回答...'
+      // 兜底超时：30 秒后如果还没结束，强制回到 idle
+      _speakingTimer = setTimeout(() => {
+        if (callState.value === 'speaking') {
+          chatStore.audioPlayer.stop()
+          chatStore.audioPlaying = false
+          goToIdle('AI 回答完毕')
+        }
+      }, 30000)
+    } else {
+      // 无音频（出错或 TTS 未生成）→ 直接 idle
+      const lastMsg = chatStore.messages[chatStore.messages.length - 1]
+      if (lastMsg?.isError) {
+        statusText.value = 'AI 出错了'
+        setTimeout(() => goToIdle('点击开始对话'), 2000)
+      } else {
+        goToIdle('点击开始对话')
+      }
+    }
+  }
+})
+
+// ── audioPlaying 变为 false 时退出 speaking ──
 watch(() => chatStore.audioPlaying, (playing, oldPlaying) => {
   if (oldPlaying && !playing && callState.value === 'speaking') {
-    // AI 语音播放完毕，自动恢复监听
-    setTimeout(() => {
-      if (callState.value === 'speaking') {
-        startRecording()
-      }
-    }, 500)
+    if (_speakingTimer) { clearTimeout(_speakingTimer); _speakingTimer = null }
+    goToIdleWithAutoRecord()
   }
 })
 
-// 超时保护：processing 超过 20 秒提示错误
-let _processingTimer = null
-
-watch(() => chatStore.loading, (loading, oldLoading) => {
-  if (loading && callState.value === 'processing') {
-    // 启动超时计时器
-    if (_processingTimer) clearTimeout(_processingTimer)
-    _processingTimer = setTimeout(() => {
-      if (callState.value === 'processing') {
-        callState.value = 'idle'
-        statusText.value = 'AI 响应超时，请重试'
-        setTimeout(() => { statusText.value = '点击开始对话' }, 3000)
-      }
-    }, 20000)
-  }
-
-  if (oldLoading && !loading && callState.value === 'processing') {
-    if (_processingTimer) { clearTimeout(_processingTimer); _processingTimer = null }
-    callState.value = 'speaking'
-    statusText.value = 'AI 正在回答...'
-  }
-})
-
-// 错误监听：AI 报错时恢复 idle
+// ── 错误兜底：processing 中出错 ──
 watch(() => chatStore.messages, (msgs) => {
   if (msgs.length > 0) {
     const last = msgs[msgs.length - 1]
     if (last.isError && callState.value === 'processing') {
-      if (_processingTimer) { clearTimeout(_processingTimer); _processingTimer = null }
       callState.value = 'idle'
       statusText.value = 'AI 出错了，请重试'
       setTimeout(() => { statusText.value = '点击开始对话' }, 3000)
@@ -141,7 +149,7 @@ watch(() => chatStore.messages, (msgs) => {
   }
 }, { deep: true })
 
-// 口型同步（复用 ChatView 的逻辑）
+// ── 口型同步 ──
 watch(() => chatStore.audioPlaying, (playing) => {
   if (_mouthRAF) { cancelAnimationFrame(_mouthRAF); _mouthRAF = 0 }
   if (playing) {
@@ -161,14 +169,35 @@ watch(() => chatStore.audioPlaying, (playing) => {
   }
 })
 
-function endCall() {
-  stopRecording()
-  if (_mouthRAF) { cancelAnimationFrame(_mouthRAF); _mouthRAF = 0 }
-  if (_processingTimer) { clearTimeout(_processingTimer); _processingTimer = null }
-  live2dRef.value?.setLipSync(0)
-  chatStore.audioPlayer?.stop()
+// ── 状态转移辅助函数 ──
+function goToIdle(text) {
+  if (_speakingTimer) { clearTimeout(_speakingTimer); _speakingTimer = null }
   callState.value = 'idle'
-  statusText.value = '通话已结束'
+  statusText.value = text || '点击开始对话'
+}
+
+function goToIdleWithAutoRecord() {
+  // speaking 结束后，如果 autoRecord 开启则自动录音
+  if (autoRecord.value) {
+    setTimeout(() => {
+      if (callState.value === 'idle') startRecording()
+    }, 500)
+  } else {
+    goToIdle()
+  }
+}
+
+function endCall() {
+  autoRecord.value = false
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop()
+  }
+  if (_mouthRAF) { cancelAnimationFrame(_mouthRAF); _mouthRAF = 0 }
+  if (_speakingTimer) { clearTimeout(_speakingTimer); _speakingTimer = null }
+  live2dRef.value?.setLipSync(0)
+  chatStore.audioPlayer.stop()
+  chatStore.audioPlaying = false
+  callState.value = 'idle'
   router.push('/chat')
 }
 
@@ -176,13 +205,12 @@ onMounted(async () => {
   await userStore.fetchMe()
   chatStore.initWebSocket()
 
-  // 等待 WebSocket 连接
   const waitForWs = () => new Promise((resolve) => {
     if (chatStore.isWsConnected) return resolve()
     const unwatch = watch(() => chatStore.isWsConnected, (connected) => {
       if (connected) { unwatch(); resolve() }
     })
-    setTimeout(() => { unwatch(); resolve() }, 5000) // 最多等5秒
+    setTimeout(() => { unwatch(); resolve() }, 5000)
   })
   await waitForWs()
   callState.value = 'idle'
@@ -190,32 +218,29 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  stopRecording()
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop()
   if (_mouthRAF) { cancelAnimationFrame(_mouthRAF); _mouthRAF = 0 }
-  if (_processingTimer) { clearTimeout(_processingTimer); _processingTimer = null }
+  if (_speakingTimer) { clearTimeout(_speakingTimer); _speakingTimer = null }
 })
 </script>
 
 <template>
   <div class="voice-call">
-    <!-- Live2D 数字人 -->
     <div class="avatar-area">
       <Live2DCanvas ref="live2dRef" class="live2d" />
     </div>
 
-    <!-- 状态提示 -->
     <div class="status-bar" :class="callState">
       <div class="status-dot" :class="callState"></div>
       <span>{{ statusText }}</span>
     </div>
 
-    <!-- 音量波纹 -->
     <div class="volume-ring" :style="{ transform: `scale(${1 + volumeLevel * 0.5})`, opacity: 0.3 + volumeLevel * 0.7 }">
       <div class="ring-inner"></div>
     </div>
 
-    <!-- 控制按钮 -->
     <div class="controls">
+      <!-- idle / speaking → 点击录音 -->
       <button
         v-if="callState === 'idle' || callState === 'speaking'"
         class="call-btn start"
@@ -225,6 +250,7 @@ onUnmounted(() => {
         <span>按住说话</span>
       </button>
 
+      <!-- listening → 松手发送 -->
       <button
         v-else-if="callState === 'listening'"
         class="call-btn listening"
@@ -235,6 +261,7 @@ onUnmounted(() => {
         <span>松手发送</span>
       </button>
 
+      <!-- processing → 等待 -->
       <button
         v-else-if="callState === 'processing'"
         class="call-btn processing"
@@ -244,6 +271,7 @@ onUnmounted(() => {
         <span>思考中...</span>
       </button>
 
+      <!-- connecting -->
       <button
         v-else-if="callState === 'connecting'"
         class="call-btn processing"
@@ -274,7 +302,6 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* Live2D */
 .avatar-area {
   flex: 1;
   width: 100%;
@@ -285,12 +312,8 @@ onUnmounted(() => {
   justify-content: center;
 }
 
-.live2d {
-  width: 100%;
-  height: 100%;
-}
+.live2d { width: 100%; height: 100%; }
 
-/* Status */
 .status-bar {
   display: flex;
   align-items: center;
@@ -304,12 +327,8 @@ onUnmounted(() => {
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #a0aec0;
+  width: 8px; height: 8px; border-radius: 50%; background: #a0aec0;
 }
-
 .status-dot.listening { background: #5a8a6a; animation: pulse 1s ease infinite; }
 .status-dot.processing { background: #c4956a; animation: pulse 0.8s ease infinite; }
 .status-dot.speaking { background: #6a9fb5; }
@@ -319,99 +338,41 @@ onUnmounted(() => {
   50% { opacity: 0.5; transform: scale(1.3); }
 }
 
-/* Volume ring */
 .volume-ring {
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
-  border: 3px solid rgba(90, 138, 106, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 120px; height: 120px; border-radius: 50%;
+  border: 3px solid rgba(90,138,106,0.4);
+  display: flex; align-items: center; justify-content: center;
   transition: transform 0.1s, opacity 0.1s;
-  position: absolute;
-  bottom: 160px;
+  position: absolute; bottom: 160px;
 }
+.ring-inner { width: 80px; height: 80px; border-radius: 50%; background: rgba(90,138,106,0.1); }
 
-.ring-inner {
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: rgba(90, 138, 106, 0.1);
-}
-
-/* Controls */
 .controls {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding-bottom: 32px;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 12px; padding-bottom: 32px;
 }
 
 .call-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 16px 40px;
-  border: none;
-  border-radius: 50px;
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  color: #fff;
-  min-width: 200px;
-  justify-content: center;
+  display: flex; align-items: center; gap: 8px;
+  padding: 16px 40px; border: none; border-radius: 50px;
+  font-size: 16px; font-weight: 600; cursor: pointer;
+  transition: all 0.2s; color: #fff; min-width: 200px; justify-content: center;
 }
-
-.call-btn.start {
-  background: linear-gradient(135deg, #5a8a6a, #4d7a5e);
-  box-shadow: 0 4px 20px rgba(90, 138, 106, 0.4);
-}
-
-.call-btn.start:hover {
-  transform: scale(1.05);
-  box-shadow: 0 6px 24px rgba(90, 138, 106, 0.5);
-}
-
-.call-btn.listening {
-  background: linear-gradient(135deg, #c0705a, #a85a48);
-  box-shadow: 0 4px 20px rgba(192, 112, 90, 0.4);
-}
-
-.call-btn.processing {
-  background: #a0aec0;
-  cursor: not-allowed;
-}
+.call-btn.start { background: linear-gradient(135deg, #5a8a6a, #4d7a5e); box-shadow: 0 4px 20px rgba(90,138,106,0.4); }
+.call-btn.start:hover { transform: scale(1.05); box-shadow: 0 6px 24px rgba(90,138,106,0.5); }
+.call-btn.listening { background: linear-gradient(135deg, #c0705a, #a85a48); box-shadow: 0 4px 20px rgba(192,112,90,0.4); }
+.call-btn.processing { background: #a0aec0; cursor: not-allowed; }
 
 .btn-icon { font-size: 20px; }
-
 .btn-icon.pulse { animation: pulse 0.8s ease infinite; }
 .btn-icon.spin { animation: spin 1s linear infinite; }
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .end-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 20px;
-  border: 1px solid #d5d2cc;
-  border-radius: 20px;
-  background: rgba(255,255,255,0.6);
-  color: #8d95a3;
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.2s;
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 20px; border: 1px solid #d5d2cc; border-radius: 20px;
+  background: rgba(255,255,255,0.6); color: #8d95a3; font-size: 13px;
+  cursor: pointer; transition: all 0.2s;
 }
-
-.end-btn:hover {
-  border-color: #c0705a;
-  color: #c0705a;
-  background: rgba(255,255,255,0.9);
-}
+.end-btn:hover { border-color: #c0705a; color: #c0705a; background: rgba(255,255,255,0.9); }
 </style>
