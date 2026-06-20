@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { ref, inject } from 'vue'
+import { ref, inject, onUnmounted } from 'vue'
 import { submitFeedback } from '@/api/analytics'
 import { synthesizeTTS } from '@/api/voice'
 import { ElMessage } from 'element-plus'
@@ -13,6 +13,24 @@ const props = defineProps({
 
 // 从 ChatView 注入的当前音色
 const currentVoice = inject('currentVoice', ref(''))
+
+// ── 全局单例：确保同一时间只有一条 TTS 在播放 ──
+// 模块级变量，所有 ChatMessage 实例共享
+let _globalTtsAudio = null
+let _globalTtsStopCb = null
+
+function stopCurrentTTS() {
+  if (_globalTtsAudio) {
+    _globalTtsAudio.pause()
+    _globalTtsAudio.onended = null
+    _globalTtsAudio.onerror = null
+    _globalTtsAudio = null
+  }
+  if (_globalTtsStopCb) {
+    _globalTtsStopCb()
+    _globalTtsStopCb = null
+  }
+}
 
 const feedbackGiven = ref(null)
 
@@ -40,28 +58,51 @@ function formatTime(timestamp) {
 }
 
 const playing = ref(false)
-let currentAudio = null
+
+// 组件销毁时，如果正在播放则停止
+onUnmounted(() => {
+  if (playing.value) stopCurrentTTS()
+})
 
 async function playTTS() {
-  // 如果正在播放：停止当前音频，重新开始播放
-  if (playing.value && currentAudio) {
-    currentAudio.pause()
-    currentAudio.onended = null
-    currentAudio.onerror = null
-    currentAudio = null
-    playing.value = false
+  // 如果当前这条消息正在播放 → 从头重播
+  if (playing.value) {
+    stopCurrentTTS()
+  } else {
+    // 停止其他消息的播放
+    stopCurrentTTS()
   }
 
   try {
     playing.value = true
     const blob = await synthesizeTTS(props.message.content, currentVoice.value)
     const url = URL.createObjectURL(blob)
-    currentAudio = new Audio(url)
-    currentAudio.onended = () => { playing.value = false; currentAudio = null; URL.revokeObjectURL(url) }
-    currentAudio.onerror = () => { playing.value = false; currentAudio = null; URL.revokeObjectURL(url) }
-    currentAudio.play()
+    const audio = new Audio(url)
+
+    // 注册为全局播放器
+    _globalTtsAudio = audio
+    _globalTtsStopCb = () => {
+      playing.value = false
+      URL.revokeObjectURL(url)
+    }
+
+    audio.onended = () => {
+      _globalTtsAudio = null
+      _globalTtsStopCb = null
+      playing.value = false
+      URL.revokeObjectURL(url)
+    }
+    audio.onerror = () => {
+      _globalTtsAudio = null
+      _globalTtsStopCb = null
+      playing.value = false
+      URL.revokeObjectURL(url)
+    }
+    audio.play()
   } catch {
     playing.value = false
+    _globalTtsAudio = null
+    _globalTtsStopCb = null
     ElMessage.warning('语音合成失败')
   }
 }
