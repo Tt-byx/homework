@@ -18,6 +18,12 @@ export const useChatStore = defineStore('chat', () => {
   // 当前正在流式接收的助手消息索引
   let currentAssistantIndex = -1
 
+  // 表情直接回调（由 ChatView 注册，跳过 watcher 时序问题）
+  let _expressionCallback = null
+  function setExpressionCallback(cb) {
+    _expressionCallback = cb
+  }
+
   /**
    * 初始化 WebSocket 连接
    */
@@ -69,7 +75,12 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     chatWs.onExpression = (expression) => {
+      console.log('[ChatStore] 收到表情事件:', expression)
       currentExpression.value = expression
+      // 直接调用注册的回调（跳过 watcher 时序问题）
+      if (_expressionCallback) {
+        _expressionCallback(expression)
+      }
     }
 
     chatWs.onDone = (data) => {
@@ -187,6 +198,7 @@ export const useChatStore = defineStore('chat', () => {
     sendVoiceMessage,
     clearMessages,
     destroy,
+    setExpressionCallback,
     onAudioStart,
     onAudioEnd,
   }

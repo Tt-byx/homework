@@ -106,6 +106,7 @@ export function useLive2D() {
 
   function setExpression(emotion: string) {
     const mapped = ExpressionMap[emotion.toLowerCase()] || emotion
+    console.log('[useLive2D] setExpression:', emotion, '→', mapped, 'delegate:', !!_delegate, 'model:', !!_delegate?.getModel())
     currentExpression.value = mapped
     _delegate?.getModel()?.setExpressionByName(mapped)
   }
