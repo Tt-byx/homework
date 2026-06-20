@@ -29,6 +29,64 @@ let _mouthRAF = 0
 // speaking 兜底超时
 let _speakingTimer = null
 
+// ── AudioBuffer → WAV Blob ──
+function encodeWav(audioBuffer) {
+  const numChannels = audioBuffer.numberOfChannels
+  const sampleRate = audioBuffer.sampleRate
+  const format = 1 // PCM
+  const bitsPerSample = 16
+
+  // 交织多声道数据
+  let interleaved
+  if (numChannels === 1) {
+    interleaved = audioBuffer.getChannelData(0)
+  } else {
+    const ch0 = audioBuffer.getChannelData(0)
+    const ch1 = audioBuffer.getChannelData(1)
+    interleaved = new Float32Array(ch0.length * 2)
+    for (let i = 0, j = 0; i < ch0.length; i++) {
+      interleaved[j++] = ch0[i]
+      interleaved[j++] = ch1[i]
+    }
+  }
+
+  // Float32 → Int16
+  const dataLength = interleaved.length * 2
+  const buffer = new ArrayBuffer(44 + dataLength)
+  const view = new DataView(buffer)
+
+  // WAV header
+  writeString(view, 0, 'RIFF')
+  view.setUint32(4, 36 + dataLength, true)
+  writeString(view, 8, 'WAVE')
+  writeString(view, 12, 'fmt ')
+  view.setUint32(16, 16, true) // chunk size
+  view.setUint16(20, format, true)
+  view.setUint16(22, numChannels, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * numChannels * bitsPerSample / 8, true)
+  view.setUint16(32, numChannels * bitsPerSample / 8, true)
+  view.setUint16(34, bitsPerSample, true)
+  writeString(view, 36, 'data')
+  view.setUint32(40, dataLength, true)
+
+  // PCM data
+  let offset = 44
+  for (let i = 0; i < interleaved.length; i++) {
+    const s = Math.max(-1, Math.min(1, interleaved[i]))
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true)
+    offset += 2
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' })
+}
+
+function writeString(view, offset, str) {
+  for (let i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i))
+  }
+}
+
 // ── 录音 ──
 async function startRecording() {
   try {
@@ -48,27 +106,41 @@ async function startRecording() {
 
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop())
-      if (audioContext) { audioContext.close(); audioContext = null }
       cancelAnimationFrame(animFrame)
       volumeLevel.value = 0
 
       if (audioChunks.length === 0) {
+        if (audioContext) { audioContext.close(); audioContext = null }
         callState.value = 'idle'
         statusText.value = '点击开始对话'
         return
       }
 
-      const blob = new Blob(audioChunks, { type: 'audio/webm' })
-      if (blob.size < 1000) {
+      const webmBlob = new Blob(audioChunks, { type: 'audio/webm' })
+      if (webmBlob.size < 1000) {
+        if (audioContext) { audioContext.close(); audioContext = null }
         callState.value = 'idle'
         statusText.value = '点击开始对话'
         return
       }
 
-      // 发送语音 → 进入 processing
-      callState.value = 'processing'
-      statusText.value = 'AI 思考中...'
-      chatStore.sendVoiceMessage(blob, 'webm')
+      // webm → wav（MiMo ASR 只支持 wav/mp3）
+      try {
+        // 复用已有的 audioContext 来解码
+        const arrayBuf = await webmBlob.arrayBuffer()
+        const decoded = await audioContext.decodeAudioData(arrayBuf)
+        const wavBlob = encodeWav(decoded)
+        if (audioContext) { audioContext.close(); audioContext = null }
+
+        callState.value = 'processing'
+        statusText.value = 'AI 思考中...'
+        chatStore.sendVoiceMessage(wavBlob, 'wav')
+      } catch (e) {
+        console.error('音频转码失败:', e)
+        if (audioContext) { audioContext.close(); audioContext = null }
+        callState.value = 'idle'
+        statusText.value = '录音转码失败，请重试'
+      }
     }
 
     mediaRecorder.start(100)
