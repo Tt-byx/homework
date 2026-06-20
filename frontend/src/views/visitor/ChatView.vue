@@ -141,25 +141,39 @@ watch(() => chatStore.loading, async (loading, oldLoading) => {
 })
 
 // ── 数字人口型同步 ──
-// ?? ???????????? viseme? ??
+// 文字口型同步：收到新文本+时长时启动 viseme 驱动
 watch([() => chatStore.lipSyncText, () => chatStore.lipSyncDuration], ([text, duration]) => {
   if (text && live2dRef.value && duration > 0) {
     live2dRef.value.startTextLipSync(text, duration)
   }
 })
 
-// ?????????
+// 音频播放结束时停止口型同步
 watch(() => chatStore.audioPlaying, (playing) => {
   if (!playing) {
     live2dRef.value?.stopTextLipSync()
   }
 })
 
-// loading ?????????
+// loading 结束后停止口型同步 + 2秒后恢复默认表情
 watch(() => chatStore.loading, (loading) => {
   if (!loading) {
     live2dRef.value?.stopTextLipSync()
     live2dRef.value?.setLipSync(0)
+    setTimeout(() => {
+      if (live2dRef.value) {
+        live2dRef.value.setExpression('Normal')
+        chatStore.currentExpression = 'Normal'
+      }
+    }, 2000)
+  }
+})
+
+// ── 数字人表情驱动 ──
+// 后端发送 expression 事件 → chatStore.currentExpression 更新 → 驱动 Live2D 表情
+watch(() => chatStore.currentExpression, (expr) => {
+  if (expr && live2dRef.value) {
+    live2dRef.value.setExpression(expr)
   }
 })
 

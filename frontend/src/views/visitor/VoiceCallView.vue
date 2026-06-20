@@ -241,6 +241,23 @@ watch(() => chatStore.audioPlaying, (playing) => {
   }
 })
 
+// ── 数字人表情驱动 ──
+watch(() => chatStore.currentExpression, (expr) => {
+  if (expr && live2dRef.value) {
+    live2dRef.value.setExpression(expr)
+  }
+})
+
+// 通话结束时恢复默认表情
+watch(() => callState.value, (state) => {
+  if (state === 'idle' && live2dRef.value) {
+    setTimeout(() => {
+      live2dRef.value?.setExpression('Normal')
+      chatStore.currentExpression = 'Normal'
+    }, 1000)
+  }
+})
+
 // ── 状态转移辅助函数 ──
 function goToIdle(text) {
   if (_speakingTimer) { clearTimeout(_speakingTimer); _speakingTimer = null }
